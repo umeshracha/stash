@@ -1,0 +1,15 @@
+{
+  "listen": "127.0.0.1:9000",
+  "data_dir": "stash-data",
+  "region": "us-east-1",
+  "credentials": {
+    "stash-admin": {
+      "secret": "replace-this-admin-secret",
+      "buckets": {"*": "admin"}
+    },
+    "reports-app": {
+      "secret": "replace-this-reports-secret",
+      "buckets": {"reports": "write"}
+    }
+  }
+}
