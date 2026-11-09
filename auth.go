@@ -12,9 +12,15 @@ import (
 	"time"
 )
 
+var presignParams = []string{"X-Amz-Algorithm", "X-Amz-Credential", "X-Amz-Date", "X-Amz-Expires", "X-Amz-SignedHeaders", "X-Amz-Signature"}
+
 type credential struct {
-	Secret  string            `json:"secret"`
-	Buckets map[string]string `json:"buckets"`
+	PolicyNames []string `json:"policies"`
+	rules       []policyStatement
+	id          string
+	Label       string            `json:"label"`
+	Secret      string            `json:"secret"`
+	Buckets     map[string]string `json:"buckets"`
 }
 
 func digest(data string) string {
@@ -47,17 +53,45 @@ func encode(s string, keepSlash bool) string {
 
 func (s *server) authorize(r *http.Request) (credential, bool) {
 	const algorithm = "AWS4-HMAC-SHA256"
-	raw, ok := strings.CutPrefix(r.Header.Get("Authorization"), algorithm+" ")
-	if !ok {
+	parsed, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
 		return credential{}, false
 	}
+	presigned := parsed.Has("X-Amz-Algorithm")
 	fields := map[string]string{}
-	for _, part := range strings.Split(raw, ",") {
-		key, value, found := strings.Cut(strings.TrimSpace(part), "=")
-		if !found || fields[key] != "" {
+	date := r.Header.Get("X-Amz-Date")
+	expiry := 15 * time.Minute
+	if presigned {
+		if r.Header.Get("Authorization") != "" || parsed.Get("X-Amz-Algorithm") != algorithm {
 			return credential{}, false
 		}
-		fields[key] = value
+		for _, name := range presignParams {
+			if len(parsed[name]) != 1 {
+				return credential{}, false
+			}
+		}
+		seconds, err := strconv.Atoi(parsed.Get("X-Amz-Expires"))
+		if err != nil || seconds < 1 || seconds > 604800 {
+			return credential{}, false
+		}
+		expiry = time.Duration(seconds) * time.Second
+		date = parsed.Get("X-Amz-Date")
+		for _, name := range []string{"Credential", "SignedHeaders", "Signature"} {
+			fields[name] = parsed.Get("X-Amz-" + name)
+		}
+		parsed.Del("X-Amz-Signature")
+	} else {
+		raw, ok := strings.CutPrefix(r.Header.Get("Authorization"), algorithm+" ")
+		if !ok {
+			return credential{}, false
+		}
+		for _, part := range strings.Split(raw, ",") {
+			key, value, found := strings.Cut(strings.TrimSpace(part), "=")
+			if !found || fields[key] != "" {
+				return credential{}, false
+			}
+			fields[key] = value
+		}
 	}
 	scope := strings.Split(fields["Credential"], "/")
 	if len(scope) != 5 || scope[2] != s.region || scope[3] != "s3" || scope[4] != "aws4_request" {
@@ -67,9 +101,8 @@ func (s *server) authorize(r *http.Request) (credential, bool) {
 	if !ok {
 		return credential{}, false
 	}
-	date := r.Header.Get("X-Amz-Date")
 	at, err := time.Parse("20060102T150405Z", date)
-	if err != nil || at.Format("20060102") != scope[1] || time.Since(at).Abs() > 15*time.Minute {
+	if err != nil || at.Format("20060102") != scope[1] || time.Since(at) > expiry || time.Until(at) > 15*time.Minute {
 		return credential{}, false
 	}
 
@@ -110,12 +143,12 @@ func (s *server) authorize(r *http.Request) (credential, bool) {
 		}
 		headers.WriteByte('\n')
 	}
-	if !hasHost || !hasDate {
+	if !hasHost || !presigned && !hasDate {
 		return credential{}, false
 	}
 	for name := range r.Header {
 		name = strings.ToLower(name)
-		if strings.HasPrefix(name, "x-amz-") && name != "x-amz-content-sha256" {
+		if strings.HasPrefix(name, "x-amz-") && (presigned || name != "x-amz-content-sha256") {
 			index := sort.SearchStrings(signed, name)
 			if index == len(signed) || signed[index] != name {
 				return credential{}, false
@@ -123,10 +156,6 @@ func (s *server) authorize(r *http.Request) (credential, bool) {
 		}
 	}
 	var query []string
-	parsed, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil {
-		return credential{}, false
-	}
 	for name, values := range parsed {
 		for _, value := range values {
 			query = append(query, encode(name, false)+"="+encode(value, false))
@@ -141,6 +170,9 @@ func (s *server) authorize(r *http.Request) (credential, bool) {
 		return left < right
 	})
 	payload := r.Header.Get("X-Amz-Content-Sha256")
+	if presigned {
+		payload = "UNSIGNED-PAYLOAD"
+	}
 	if payload == "" {
 		return credential{}, false
 	}
@@ -153,5 +185,6 @@ func (s *server) authorize(r *http.Request) (credential, bool) {
 		key = mac(key, part)
 	}
 	signature, err := hex.DecodeString(fields["Signature"])
+	c.id = scope[0]
 	return c, err == nil && hmac.Equal(signature, mac(key, message))
 }

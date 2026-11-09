@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stash Console</title>
+<style>
+:root{color-scheme:dark;--page:#0c1118;--surface:#141c27;--line:#253447;--text:#edf4fd;--muted:#a4b5c8;--accent:#80dfcb}
+
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--text);font:15px/1.5 system-ui,sans-serif}
+a{color:var(--accent)}
+header{border-bottom:1px solid var(--line)}
+header div,main{max-width:1180px;margin:auto;padding:22px 28px}
+header a{font-weight:750;text-decoration:none;color:var(--text)}
+header span{margin-left:12px;color:var(--muted)}
+h1{font-size:36px;margin:0 0 4px}
+h2{font-size:20px;margin:0 0 14px}
+p{color:var(--muted);margin:4px 0 18px}
+section{margin:24px 0}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.card,.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:17px}
+.card span,label{color:var(--muted);display:block}
+.card strong{font-size:23px}
+.table{overflow:auto}
+table{width:100%;border-collapse:collapse;text-align:left;white-space:nowrap}
+th,td{padding:9px 12px;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-size:12px}
+td:first-child{max-width:420px;overflow:hidden;text-overflow:ellipsis}
+form{display:flex;flex-wrap:wrap;align-items:end;gap:12px;margin:0 0 14px}
+input,button,.download{font:inherit;border-radius:6px;padding:6px 10px;border:1px solid var(--line)}
+input{background:#101722;color:var(--text);max-width:100%}
+button,.download{background:#17483f;color:#baf9ea;cursor:pointer;text-decoration:none}
+.chart{display:flex;align-items:end;gap:5px;height:116px;margin:12px 0 18px;padding:0 4px;border-bottom:1px solid var(--line)}
+.bar{background:var(--accent);min-width:2px;flex:1;border-radius:3px 3px 0 0}
+.pager{display:inline-block;margin-top:12px}
+@media (max-width: 600px) {
+header div,main{padding:16px}
+.card,.panel{padding:13px}
+h1{font-size:28px}
+}
+</style>
+</head>
+<body>
+<header><div><a href="/.stash/admin/">Stash</a><span>Admin console</span></div></header>
+<main>
+<h1>Storage overview</h1>
+<p>Current bucket inventory and hourly S3 traffic on this coordinator.</p>
+<div class="cards">
+<div class="card"><span>Stored object data</span><strong>{{.Stored}}</strong></div>
+<div class="card"><span>Local disk used</span><strong>{{.DiskUsed}}</strong></div>
+<div class="card"><span>Local disk available</span><strong>{{.DiskFree}}</strong></div>
+<div class="card"><span>Filtered requests</span><strong>{{.Requests}}</strong></div>
+<div class="card"><span>Error rate</span><strong>{{.ErrorRate}}</strong></div>
+<div class="card"><span>p95 latency</span><strong>{{.P95}}</strong></div>
+</div>
+<section class="panel">
+<h2>Buckets</h2>
+<p><a href="{{.StorageCSV}}">Download storage history CSV</a></p>
+{{if .Storage}}<p>Stored bytes over time{{if .Bucket}} for {{.Bucket}}{{end}}. Each bar uses the last hourly sample in its interval.</p>
+<div class="chart" role="img" aria-label="Storage samples, oldest to newest">
+{{range .Storage}}<div class="bar" title="{{.Label}} UTC: {{.Size}}" style="height:{{.Percent}}%"></div>{{end}}
+</div>{{end}}
+<div class="table"><table><thead><tr><th>Bucket</th><th>Current objects</th><th>Current bytes</th><th>All version bytes</th><th>Versions</th><th>Delete markers</th></tr></thead><tbody>
+{{range .Buckets}}<tr><td><a href="{{.Link}}">{{.Name}}</a></td><td>{{.Objects}}</td><td>{{.Current}}</td><td>{{.Stored}}</td><td>{{.Versions}}</td><td>{{.Markers}}</td></tr>{{else}}<tr><td colspan="6">No buckets yet.</td></tr>{{end}}
+</tbody></table></div>
+</section>
+{{if .Bucket}}
+<section class="panel">
+<h2>Objects in {{.Bucket}}</h2>
+<form action="/.stash/admin/" method="get">
+<input type="hidden" name="bucket" value="{{.Bucket}}">
+<label>Prefix <input name="prefix" value="{{.Prefix}}"></label><button type="submit">Browse</button>
+</form>
+<div class="table"><table><thead><tr><th>Object key</th><th>Size</th><th>Modified (UTC)</th><th>File</th></tr></thead><tbody>
+{{range .Objects}}<tr><td title="{{.Key}}">{{.Key}}</td><td>{{.Size}}</td><td>{{.Modified}}</td><td><a href="{{.URL}}">Download</a></td></tr>{{else}}<tr><td colspan="4">No current objects match.</td></tr>{{end}}
+</tbody></table></div>
+{{if .Next}}<a class="pager" href="{{.Next}}">Next page</a>{{end}}
+</section>
+{{end}}
+{{if .Replication}}<section class="panel"><h2>Replication</h2>
+<div class="table"><table><thead><tr><th>Bucket</th><th>Status</th><th>Last successful sync</th><th>Versions</th><th>Error</th></tr></thead><tbody>
+{{range .Replication}}<tr><td>{{.Bucket}}</td><td>{{.State}}</td><td>{{.LastSuccess}}</td><td>{{.Versions}}</td><td>{{.Error}}</td></tr>{{end}}
+</tbody></table></div></section>{{end}}
+<section class="panel">
+<h2>S3 traffic</h2>
+<form action="/.stash/admin/" method="get">
+<label>Bucket <input name="bucket" value="{{.Bucket}}"></label>
+<label>App label <input name="app" value="{{.App}}"></label>
+<label>Operation <input name="operation" value="{{.Operation}}"></label>
+<label>Last hours <input name="hours" type="number" min="1" max="720" value="{{.Hours}}"></label>
+<button type="submit">Apply filters</button><a class="download" href="{{.CSV}}">Download CSV</a>
+</form>
+<div class="chart" role="img" aria-label="Requests over the selected period, oldest to newest">
+{{range .Traffic}}<div class="bar" title="{{.Label}} UTC: {{.Requests}} requests" style="height:{{.Percent}}%"></div>{{end}}
+</div>
+<p>Showing {{.Showing}} of {{.TotalRows}} hourly rows. Latency is the upper bound of the p95 histogram bucket.</p>
+<div class="table"><table><thead><tr><th>Hour (UTC)</th><th>Bucket</th><th>App</th><th>Operation</th><th>Requests</th><th>Errors</th><th>Upload wire bytes</th><th>Download bytes</th><th>p95 (ms)</th></tr></thead><tbody>
+{{range .Rows}}<tr><td>{{.Hour}}</td><td>{{.Bucket}}</td><td>{{.App}}</td><td>{{.Operation}}</td><td>{{.Requests}}</td><td>{{.Errors}}</td><td>{{.Uploaded}}</td><td>{{.Downloaded}}</td><td>{{.P95}}</td></tr>{{else}}<tr><td colspan="9">No requests match these filters.</td></tr>{{end}}
+</tbody></table></div>
+</section>
+</main>
+</body>
+</html>
