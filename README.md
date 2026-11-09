@@ -1,13 +1,13 @@
 # Stash
 
-Stash is a Go object storage system targeting MinIO-style S3 compatibility, durability, and operations. The current build is the single-node foundation. It runs as one binary and stores data in one local directory.
+Stash is a Go object storage system targeting MinIO-style S3 compatibility, durability, and operations. The same binary can run as a standalone server, a cluster coordinator, or a dedicated shard node.
 
 ## Run locally
 
 Requires Go 1.25 or later. Build on macOS or Linux.
 
 ```sh
-go build -o stash .
+go build -o stash ./cmd/stash
 umask 077
 cp stash.example.json stash.json
 # Edit stash.json to replace the sample secrets with unique random secrets.
@@ -17,6 +17,19 @@ cp stash.example.json stash.json
 Stash binds to loopback by default. For remote use, configure both `tls_cert` and `tls_key`, or terminate TLS at a reverse proxy that preserves the signed request host, path, and query. Keep the configuration readable only by the service account. To rotate a credential, add a new access key and secret, restart, migrate the client, then remove the old credential and restart again.
 
 Each credential maps bucket names to grants. A named grant takes precedence over `*`. The `read` grant allows listing and reading, `write` adds object writes and deletes, and `admin` adds bucket creation and deletion.
+
+## Project layout
+
+| Path | Responsibility |
+| --- | --- |
+| `cmd/stash/` | Primary executable entry point. The root entry point also supports existing `go build .` callers. |
+| `internal/cli/` | Command-line flags shared by both entry points. |
+| `internal/server/` | Configuration, S3 operations, storage, replication, clustering, and operations. Tests live beside the code they exercise. |
+| `internal/server/web/` | Embedded admin console template. |
+| `internal/sigv4/` | AWS Signature Version 4 verification and request canonicalization. |
+| `tools/` | Repeatable performance benchmarks. |
+
+Run the Go tests with `go test ./...`.
 
 ## Try the API
 
@@ -289,12 +302,12 @@ The reference system was an Apple M1 Pro (10 CPU cores, 32 GiB RAM), macOS 26.4.
 | Local 2+2 erasure | 4.81 | 31.27 |
 | Networked 2+2 cluster | 14.20 | 82.84 |
 
-On the same host, the Go version-head benchmark opened the current version of a key with 1,000 versions in 51.7 µs with a warm head cache and 32.6 ms when rebuilding the head. Both cases used the operating system's filesystem cache. The benchmark measures metadata lookup inside Stash and can be run with `go test -run '^$' -bench BenchmarkVersionHead -benchmem`.
+On the same host, the Go version-head benchmark opened the current version of a key with 1,000 versions in 51.7 µs with a warm head cache and 32.6 ms when rebuilding the head. Both cases used the operating system's filesystem cache. The benchmark measures metadata lookup inside Stash and can be run with `go test ./internal/server -run '^$' -bench BenchmarkVersionHead -benchmem`.
 
 Run with Python 3 and boto3 installed from the Stash source directory. Each invocation emits JSON for one run and removes its temporary data when finished.
 
 ```sh
-go build -o stash .
+go build -o stash ./cmd/stash
 python3 tools/bench.py ./stash --layout standalone
 python3 tools/bench.py ./stash --layout erasure
 python3 tools/bench.py ./stash --layout cluster --etcd "$(command -v etcd)"
@@ -319,6 +332,6 @@ Stop the server before backing up or restoring. Back up the entire data director
 ## Linux builds
 
 ```sh
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o stash-linux-amd64 .
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o stash-linux-arm64 .
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o stash-linux-amd64 ./cmd/stash
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o stash-linux-arm64 ./cmd/stash
 ```

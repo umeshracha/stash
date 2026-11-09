@@ -1,0 +1,6 @@
+/stash
+/stash-linux-amd64
+/stash-linux-arm64
+/stash.json
+/stash-data/
+__pycache__/
