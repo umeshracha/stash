@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"stash/internal/fsutil"
 	"stash/internal/sigv4"
 )
 
@@ -95,7 +96,7 @@ func (s *server) bucketVersioning(w http.ResponseWriter, r *http.Request, bucket
 			err = os.Rename(tmp.Name(), filepath.Join(dir, versionConfig))
 		}
 		if err == nil {
-			err = syncDir(dir)
+			err = fsutil.SyncDir(dir)
 		}
 		if err != nil {
 			storageError(w, err, "NoSuchBucket")
@@ -305,7 +306,7 @@ func (s *store) publishVersion(file *os.File, dir string, obj *object) error {
 	if err := os.Mkdir(subdir, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
 	}
-	if err := syncDir(dir); err != nil {
+	if err := fsutil.SyncDir(dir); err != nil {
 		return err
 	}
 	return publish(subdir, obj.VersionID)
@@ -356,7 +357,7 @@ func (s *store) removeVersion(dir, key, version string, bypass bool) (object, er
 		return object{}, err
 	}
 	s.recordReplicaChange(dir, obj, true)
-	if err := syncDir(filepath.Dir(path)); err != nil {
+	if err := fsutil.SyncDir(filepath.Dir(path)); err != nil {
 		return object{}, err
 	}
 	if err := os.Remove(protectionPath(dir, name, obj.VersionID)); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -364,7 +365,7 @@ func (s *store) removeVersion(dir, key, version string, bypass bool) (object, er
 	}
 
 	obj.VersionID = version
-	return obj, syncDir(dir)
+	return obj, fsutil.SyncDir(dir)
 }
 
 func validVersion(id string) bool {

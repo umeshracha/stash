@@ -2,12 +2,15 @@ package server
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"io"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"stash/internal/encryption"
 )
 
 func TestEncryptedObjectRoundTripAndCorruption(t *testing.T) {
@@ -16,7 +19,14 @@ func TestEncryptedObjectRoundTripAndCorruption(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.close()
-	s.encryption = &encryptionKeys{active: "first", keys: map[string][]byte{"first": bytes.Repeat([]byte{7}, 32)}}
+	keyFile := filepath.Join(t.TempDir(), "key")
+	if err := os.WriteFile(keyFile, []byte(base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s.encryption, err = encryption.Open(s.dir, &encryption.Config{ActiveKey: "first", KeyFiles: map[string]string{"first": keyFile}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	dir := filepath.Join(s.dir, "reports")
 	if err := os.Mkdir(dir, 0700); err != nil {
 		t.Fatal(err)
@@ -45,17 +55,17 @@ func TestEncryptedObjectRoundTripAndCorruption(t *testing.T) {
 		defer reader.Close()
 		return io.ReadAll(io.NewSectionReader(reader, offset, int64(size)))
 	}
-	start := encryptionBlock - 20
+	start := (256 << 10) - 20
 	got, err := read(int64(start), 40)
 	if err != nil || !bytes.Equal(got, data[start:start+40]) {
 		t.Fatalf("cross-chunk range read failed: %v", err)
 	}
-	stored[encryptionBlock+encryptionTagSize+12] ^= 0x80
+	stored[(256<<10)+16+12] ^= 0x80
 	if err := os.WriteFile(path, stored, 0600); err != nil {
 		t.Fatal(err)
 	}
-	got, err = read(int64(encryptionBlock), 100)
-	if !errors.Is(err, errCiphertext) || len(got) != 0 {
+	got, err = read(int64((256 << 10)), 100)
+	if !errors.Is(err, encryption.ErrCiphertext) || len(got) != 0 {
 		t.Fatalf("corrupted chunk leaked data or returned the wrong error: %d bytes, %v", len(got), err)
 	}
 }

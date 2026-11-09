@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"time"
+
+	"stash/internal/fsutil"
 )
 
 type replicaHTTPError int
@@ -133,7 +135,7 @@ func (service *replication) applyDelta(ctx context.Context, source replicaSource
 	service.store.mu.Lock()
 	defer service.store.mu.Unlock()
 	service.store.clearVersionHeads()
-	if err := writeMetadataFile(dir, replicaDirtyFile, nil); err != nil {
+	if err := fsutil.WriteFileAtomic(dir, replicaDirtyFile, nil); err != nil {
 		return 0, err
 	}
 	for _, item := range staged {
@@ -145,12 +147,12 @@ func (service *replication) applyDelta(ctx context.Context, source replicaSource
 		if err := os.Remove(path); err != nil {
 			return 0, err
 		}
-		if err := syncDir(filepath.Dir(path)); err != nil {
+		if err := fsutil.SyncDir(filepath.Dir(path)); err != nil {
 			return 0, err
 		}
 	}
 	if status != delta.Status {
-		if err := writeMetadataFile(dir, versionConfig, []byte(delta.Status)); err != nil {
+		if err := fsutil.WriteFileAtomic(dir, versionConfig, []byte(delta.Status)); err != nil {
 			return 0, err
 		}
 	}

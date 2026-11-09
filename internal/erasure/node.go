@@ -1,8 +1,9 @@
-package server
+package erasure
 
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,14 +15,23 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"stash/internal/fsutil"
+	"stash/internal/netutil"
 )
 
 const shardRoute = "/.stash/shards/"
-const maxShardFile = maxMultipartSize + maxMultipartSize/1024 + shardRecordSize
+const maxShardInventory = 32 << 20
+const maxObjectSize int64 = 5 << 40
+const maxShardFile = maxObjectSize + maxObjectSize/1024 + shardRecordSize
 
-type shardNode struct {
+type Node struct {
 	Endpoint string `json:"endpoint"`
 	Token    string `json:"token"`
+}
+
+func NewHandler(dir, token string) http.Handler {
+	return shardNodeHandler{dir: dir, token: token}
 }
 
 type shardNodeHandler struct {
@@ -31,14 +41,14 @@ type shardNodeHandler struct {
 
 func shardTokenMatches(r *http.Request, token string) bool {
 	host, _, _ := net.SplitHostPort(r.RemoteAddr)
-	return (r.TLS != nil || loopback(host)) &&
+	return (r.TLS != nil || netutil.Loopback(host)) &&
 		subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) == 1
 }
 
 func (h shardNodeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	route, ok := strings.CutPrefix(r.URL.Path, shardRoute)
 	namespace, id, found := strings.Cut(route, "/")
-	if !ok || !shardID(namespace) || found && !shardID(id) || r.URL.RawQuery != "" {
+	if !ok || !ValidID(namespace) || found && !ValidID(id) || r.URL.RawQuery != "" {
 		http.NotFound(w, r)
 		return
 	}
@@ -64,11 +74,11 @@ func (h shardNodeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ids := make([]string, 0, len(entries))
 		for _, entry := range entries {
 			id, ok := strings.CutSuffix(entry.Name(), ".shard")
-			if ok && shardID(id) && entry.Type().IsRegular() {
+			if ok && ValidID(id) && entry.Type().IsRegular() {
 				ids = append(ids, id)
 			}
 		}
-		if len(ids) > maxManifest/36 {
+		if len(ids) > maxShardInventory/36 {
 			http.Error(w, "shard inventory too large", 503)
 			return
 		}
@@ -108,7 +118,7 @@ func (h shardNodeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "incomplete shard", 400)
 			return
 		}
-		if err := syncDir(h.dir); err != nil {
+		if err := fsutil.SyncDir(h.dir); err != nil {
 			http.Error(w, "shard storage unavailable", 503)
 			return
 		}
@@ -120,7 +130,7 @@ func (h shardNodeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		err := os.Remove(path)
 		if err == nil {
-			err = syncDir(dir)
+			err = fsutil.SyncDir(dir)
 		}
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			http.Error(w, "cannot delete shard", 503)
@@ -133,14 +143,17 @@ func (h shardNodeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func shardID(value string) bool { return value != "null" && validVersion(value) }
+func ValidID(value string) bool {
+	raw, err := hex.DecodeString(value)
+	return err == nil && len(raw) == 16 && value == strings.ToLower(value)
+}
 
-func validateShardNode(node shardNode) (shardNode, error) {
+func ValidateNode(node Node) (Node, error) {
 	u, err := url.Parse(node.Endpoint)
 	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
-		u.Path != "" && u.Path != "/" || u.Scheme != "https" && !(u.Scheme == "http" && loopback(u.Hostname())) ||
+		u.Path != "" && u.Path != "/" || u.Scheme != "https" && !(u.Scheme == "http" && netutil.Loopback(u.Hostname())) ||
 		len(node.Token) < 24 {
-		return shardNode{}, errors.New("shard node requires an HTTPS endpoint or loopback HTTP and a token of at least 24 bytes")
+		return Node{}, errors.New("shard node requires an HTTPS endpoint or loopback HTTP and a token of at least 24 bytes")
 	}
 	node.Endpoint = strings.TrimRight(node.Endpoint, "/")
 	return node, nil
@@ -171,7 +184,7 @@ func (s *remoteShard) request(method string, body io.Reader, length int64, byteR
 	response, err := s.client.Do(r)
 	if err != nil {
 		cancel()
-		return nil, errShardQuorum
+		return nil, ErrQuorum
 	}
 	response.Body = &cancelReadCloser{ReadCloser: response.Body, cancel: cancel}
 	return response, nil
@@ -206,7 +219,7 @@ func (s *remoteShard) ReadAt(p []byte, offset int64) (int, error) {
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusPartialContent || res.ContentLength != int64(len(p)) ||
 		res.Header.Get("Content-Range") != fmt.Sprintf("bytes %d-%d/%d", offset, end, s.size) {
-		return 0, errShardQuorum
+		return 0, ErrQuorum
 	}
 	return io.ReadFull(res.Body, p)
 }

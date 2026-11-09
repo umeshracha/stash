@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"stash/internal/fsutil"
 )
 
 type replicaTestTransport func(*http.Request) (*http.Response, error)
@@ -83,7 +85,7 @@ func TestReplicaChangeFeedCatchUpAndReset(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := writeMetadataFile(dir, versionConfig, []byte("Enabled")); err != nil {
+	if err := fsutil.WriteFileAtomic(dir, versionConfig, []byte("Enabled")); err != nil {
 		t.Fatal(err)
 	}
 	export, err := configureReplication(config{ReplicationExports: map[string]string{bucket: token}}, source)

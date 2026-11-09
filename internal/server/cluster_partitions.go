@@ -12,6 +12,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"stash/internal/encryption"
+	"stash/internal/erasure"
+	"stash/internal/etcd"
+	"stash/internal/fsutil"
 )
 
 type clusterRoot struct {
@@ -27,15 +32,15 @@ type metadataPartition struct {
 }
 
 func newClusterRoot(dir string) ([]byte, error) {
-	layout, err := os.ReadFile(filepath.Join(dir, erasureLayout))
+	layout, err := os.ReadFile(filepath.Join(dir, erasure.LayoutFile))
 	if err != nil {
 		return nil, err
 	}
-	encryption, err := clusterEncryptionBinding(dir)
+	localBinding, err := clusterEncryptionBinding(dir)
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(partitionRoot(layout, encryption))
+	return json.Marshal(partitionRoot(layout, localBinding))
 }
 
 func partitionRoot(layout, encryption []byte) clusterRoot {
@@ -56,16 +61,16 @@ func (cluster *metadataCluster) refreshPartitions(ctx context.Context, encoded, 
 		return errors.New("invalid cluster metadata root")
 	}
 	dir := cluster.store.dir
-	encryption, err := clusterEncryptionBinding(dir)
+	localBinding, err := clusterEncryptionBinding(dir)
 	if err != nil {
 		return err
 	}
-	active, err := clusterActiveKey(encryption, root.Encryption)
+	active, err := clusterActiveKey(localBinding, root.Encryption)
 	if err != nil {
 		return err
 	}
 	if active != "" && cluster.store.encryption == nil {
-		return errEncryptionUnavailable
+		return encryption.ErrUnavailable
 	}
 	if len(expectedLayout) != 0 && !bytes.Equal(expectedLayout, root.Layout) {
 		return errors.New("cluster shard layout changed")
@@ -79,7 +84,7 @@ func (cluster *metadataCluster) refreshPartitions(ctx context.Context, encoded, 
 	updated := make(map[string]metadataPartition)
 	readRevision := cluster.readRevision
 	if revision, err := strconv.ParseInt(readRevision, 10, 64); err != nil || revision <= 0 {
-		return errMetadataQuorum
+		return etcd.ErrQuorum
 	}
 	for start := prefix; ; {
 		query := map[string]any{
@@ -87,8 +92,8 @@ func (cluster *metadataCluster) refreshPartitions(ctx context.Context, encoded, 
 			"limit": "1000", "sort_order": "ASCEND", "sort_target": "KEY",
 		}
 		query["revision"] = readRevision
-		var page etcdRange
-		if err := cluster.call(ctx, "/v3/kv/range", query, &page); err != nil {
+		page, err := cluster.etcd.Range(ctx, query)
+		if err != nil {
 			return err
 		}
 		for _, item := range page.KVs {
@@ -96,19 +101,18 @@ func (cluster *metadataCluster) refreshPartitions(ctx context.Context, encoded, 
 			bucket, valid := strings.CutPrefix(string(key), prefix)
 			revision, revErr := strconv.ParseInt(item.Revision, 10, 64)
 			if err != nil || !valid || !bucketName.MatchString(bucket) || revErr != nil || revision <= 0 {
-				return errMetadataQuorum
+				return etcd.ErrQuorum
 			}
 			previous := cluster.partitions[bucket]
 			if cluster.revision != "" && cluster.generation == root.Generation && previous.revision == item.Revision {
 				updated[bucket] = previous
 			} else {
-				var value etcdRange
-				err := cluster.call(ctx, "/v3/kv/range", map[string]string{"key": item.Key, "revision": readRevision}, &value)
+				value, err := cluster.etcd.Range(ctx, map[string]string{"key": item.Key, "revision": readRevision})
 				if err != nil {
 					return err
 				}
 				if len(value.KVs) != 1 || value.KVs[0].Revision != item.Revision {
-					return errMetadataQuorum
+					return etcd.ErrQuorum
 				}
 				data := value.KVs[0].Value
 				cluster.store.clearVersionHeads()
@@ -123,7 +127,7 @@ func (cluster *metadataCluster) refreshPartitions(ctx context.Context, encoded, 
 			break
 		}
 		if len(page.KVs) == 0 {
-			return errMetadataQuorum
+			return etcd.ErrQuorum
 		}
 	}
 
@@ -142,12 +146,12 @@ func (cluster *metadataCluster) refreshPartitions(ctx context.Context, encoded, 
 		}
 	}
 	if len(expectedLayout) == 0 {
-		if err := writeMetadataFile(dir, erasureLayout, root.Layout); err != nil {
+		if err := fsutil.WriteFileAtomic(dir, erasure.LayoutFile, root.Layout); err != nil {
 			return err
 		}
 	}
 	if active != "" {
-		cluster.store.encryption.active = active
+		cluster.store.encryption.SetActive(active)
 	}
 	cluster.partitions = updated
 	cluster.generation = root.Generation
@@ -214,12 +218,12 @@ func (cluster *metadataCluster) commitPartition(ctx context.Context, bucket, roo
 		},
 		"success": []any{operation},
 	}
-	committed, err := cluster.runTransaction(ctx, transaction)
+	committed, err := cluster.etcd.Transaction(ctx, transaction)
 	if err != nil {
 		return err
 	}
 	if committed == "" {
-		return errMetadataQuorum
+		return etcd.ErrQuorum
 	}
 	if data == nil {
 		delete(cluster.partitions, bucket)
@@ -272,12 +276,12 @@ func (cluster *metadataCluster) migrateMetadata(ctx context.Context, revision st
 			"compare": []any{map[string]string{"target": "MOD", "result": "EQUAL", "key": cluster.key, "mod_revision": revision}},
 			"success": []any{map[string]any{"request_put": map[string]any{"key": key, "value": partition}}},
 		}
-		committed, err := cluster.runTransaction(ctx, transaction)
+		committed, err := cluster.etcd.Transaction(ctx, transaction)
 		if err != nil {
 			return err
 		}
 		if committed == "" {
-			return errMetadataQuorum
+			return etcd.ErrQuorum
 		}
 	}
 	encoded, err := json.Marshal(root)

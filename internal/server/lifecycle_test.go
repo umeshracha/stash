@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"stash/internal/fsutil"
 )
 
 func TestLifecycleDoesNotPurgeProtectedHistory(t *testing.T) {
@@ -20,7 +22,7 @@ func TestLifecycleDoesNotPurgeProtectedHistory(t *testing.T) {
 	if err := os.Mkdir(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeMetadataFile(dir, versionConfig, []byte("Enabled")); err != nil {
+	if err := fsutil.WriteFileAtomic(dir, versionConfig, []byte("Enabled")); err != nil {
 		t.Fatal(err)
 	}
 	put := func(key string) object {
@@ -46,7 +48,7 @@ func TestLifecycleDoesNotPurgeProtectedHistory(t *testing.T) {
 		<NoncurrentVersionExpiration><NoncurrentDays>1</NoncurrentDays></NoncurrentVersionExpiration>
 		<AbortIncompleteMultipartUpload><DaysAfterInitiation>1</DaysAfterInitiation></AbortIncompleteMultipartUpload>
 		</Rule></LifecycleConfiguration>`)
-	if err := writeMetadataFile(dir, lifecycleFile, config); err != nil {
+	if err := fsutil.WriteFileAtomic(dir, lifecycleFile, config); err != nil {
 		t.Fatal(err)
 	}
 	stage := filepath.Join(dir, ".mp-"+strings.Repeat("a", 32))

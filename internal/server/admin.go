@@ -20,6 +20,8 @@ import (
 	"syscall"
 	"time"
 	"unicode"
+
+	"stash/internal/netutil"
 )
 
 const adminPath = "/.stash/admin/"
@@ -103,7 +105,7 @@ func byteCount(size uint64) string {
 
 func (a *adminConsole) authenticate(w http.ResponseWriter, r *http.Request) bool {
 	host, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if r.TLS == nil && !loopback(host) {
+	if r.TLS == nil && !netutil.Loopback(host) {
 		http.Error(w, "TLS is required for the admin console", 403)
 		return false
 	}

@@ -9,12 +9,15 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"stash/internal/erasure"
+	"stash/internal/etcd"
 )
 
 func TestClusterRejectsAndDiscardsConflictingMutation(t *testing.T) {
 	dir := t.TempDir()
 	layout := []byte("fixed layout")
-	if err := os.WriteFile(filepath.Join(dir, erasureLayout), layout, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, erasure.LayoutFile), layout, 0600); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := snapshotMetadata(dir)
@@ -32,8 +35,7 @@ func TestClusterRejectsAndDiscardsConflictingMutation(t *testing.T) {
 		encoded, err := json.Marshal(result)
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(encoded))}, err
 	})}
-	cluster := &metadataCluster{store: &store{dir: dir}, client: client, revision: "7",
-		config: clusterConfig{Endpoints: []string{"https://etcd.example"}}}
+	cluster := &metadataCluster{store: &store{dir: dir}, etcd: etcd.NewWithHTTP([]string{"https://etcd.example"}, "", "", client), revision: "7"}
 	bucket := filepath.Join(dir, "reports")
 	handler := cluster.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut {

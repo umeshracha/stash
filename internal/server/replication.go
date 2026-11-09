@@ -21,6 +21,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"stash/internal/fsutil"
+	"stash/internal/netutil"
 )
 
 const replicationPath = "/.stash/replication/"
@@ -94,7 +97,7 @@ func configureReplication(cfg config, storage *store) (*replication, error) {
 	for bucket, source := range service.sources {
 		u, err := url.Parse(source.Endpoint)
 		if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
-			u.Path != "" && u.Path != "/" || u.Scheme != "https" && !(u.Scheme == "http" && loopback(u.Hostname())) ||
+			u.Path != "" && u.Path != "/" || u.Scheme != "https" && !(u.Scheme == "http" && netutil.Loopback(u.Hostname())) ||
 			!bucketName.MatchString(bucket) || !bucketName.MatchString(source.Bucket) || len(source.Token) < 24 ||
 			source.IntervalSeconds < 0 || source.IntervalSeconds > 86400 {
 			return nil, fmt.Errorf("invalid replica configuration for %q", bucket)
@@ -119,7 +122,7 @@ func configureReplication(cfg config, storage *store) (*replication, error) {
 			if err := saveReplicaStatus(dir, state); err != nil {
 				return nil, err
 			}
-			if err := syncDir(storage.dir); err != nil {
+			if err := fsutil.SyncDir(storage.dir); err != nil {
 				return nil, err
 			}
 		} else if err != nil {
@@ -148,11 +151,6 @@ func configureReplication(cfg config, storage *store) (*replication, error) {
 	return service, nil
 }
 
-func loopback(host string) bool {
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
-
 func readReplicaStatus(dir string) (replicaStatus, error) {
 	var status replicaStatus
 	data, err := os.ReadFile(filepath.Join(dir, replicaStateFile))
@@ -168,23 +166,7 @@ func saveReplicaStatus(dir string, status replicaStatus) error {
 	if err != nil {
 		return err
 	}
-	return writeMetadataFile(dir, replicaStateFile, data)
-}
-
-func writeMetadataFile(dir, name string, data []byte) error {
-	tmp, err := os.CreateTemp(dir, ".upload-")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	_, writeErr := tmp.Write(data)
-	if err := errors.Join(writeErr, tmp.Sync(), tmp.Close()); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp.Name(), filepath.Join(dir, name)); err != nil {
-		return err
-	}
-	return syncDir(dir)
+	return fsutil.WriteFileAtomic(dir, replicaStateFile, data)
 }
 
 func (s *server) serveReplication(w http.ResponseWriter, r *http.Request) {
@@ -221,7 +203,7 @@ func (s *server) serveReplication(w http.ResponseWriter, r *http.Request) {
 	}
 	token, ok := service.exports[bucket]
 	host, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if !ok || r.TLS == nil && !loopback(host) ||
+	if !ok || r.TLS == nil && !netutil.Loopback(host) ||
 		subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
 		http.Error(w, "access denied", 403)
 		return
@@ -442,7 +424,7 @@ func (service *replication) sync(ctx context.Context, bucket string, source repl
 		if err == nil {
 			err = os.Remove(filepath.Join(dir, replicaDirtyFile))
 			if err == nil {
-				err = syncDir(dir)
+				err = fsutil.SyncDir(dir)
 			} else if errors.Is(err, os.ErrNotExist) {
 				err = nil
 			}
@@ -529,7 +511,7 @@ func (service *replication) reconcile(ctx context.Context, bucket string, source
 	}
 	if len(staged) != 0 || len(existing) != len(wanted) || local.Status != manifest.Status || lockChanged {
 		service.store.clearVersionHeads()
-		if err := writeMetadataFile(dir, replicaDirtyFile, nil); err != nil {
+		if err := fsutil.WriteFileAtomic(dir, replicaDirtyFile, nil); err != nil {
 			return "", 0, err
 		}
 	}
@@ -546,12 +528,12 @@ func (service *replication) reconcile(ctx context.Context, bucket string, source
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return "", 0, err
 		}
-		if err := syncDir(filepath.Dir(path)); err != nil {
+		if err := fsutil.SyncDir(filepath.Dir(path)); err != nil {
 			return "", 0, err
 		}
 	}
 	if local.Status != manifest.Status {
-		if err := writeMetadataFile(dir, versionConfig, []byte(manifest.Status)); err != nil {
+		if err := fsutil.WriteFileAtomic(dir, versionConfig, []byte(manifest.Status)); err != nil {
 			return "", 0, err
 		}
 	}
@@ -628,7 +610,7 @@ func (s *store) publishReplicaVersion(dir string, item replicaTransfer) error {
 		if err := os.Mkdir(subdir, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 			return err
 		}
-		if err := syncDir(dir); err != nil {
+		if err := fsutil.SyncDir(dir); err != nil {
 			return err
 		}
 	}

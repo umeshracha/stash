@@ -12,6 +12,10 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"stash/internal/erasure"
+	"stash/internal/etcd"
+	"stash/internal/fsutil"
 )
 
 const lifecycleFile = ".lifecycle"
@@ -197,7 +201,7 @@ func (s *server) bucketLifecycle(w http.ResponseWriter, r *http.Request, bucket 
 			failure(w, 400, "InvalidRequest")
 			return
 		}
-		if err := writeMetadataFile(dir, lifecycleFile, data); err != nil {
+		if err := fsutil.WriteFileAtomic(dir, lifecycleFile, data); err != nil {
 			storageError(w, err, "NoSuchBucket")
 			return
 		}
@@ -205,7 +209,7 @@ func (s *server) bucketLifecycle(w http.ResponseWriter, r *http.Request, bucket 
 	case http.MethodDelete:
 		err := os.Remove(path)
 		if err == nil {
-			err = syncDir(dir)
+			err = fsutil.SyncDir(dir)
 		}
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			storageError(w, err, "NoSuchBucket")
@@ -336,7 +340,7 @@ func (s *store) expireBucket(dir string, rules []lifecycleRule, now time.Time) (
 	}
 	for _, entry := range entries {
 		id, ok := strings.CutPrefix(entry.Name(), ".mp-")
-		if !ok || !entry.IsDir() || !shardID(id) {
+		if !ok || !entry.IsDir() || !erasure.ValidID(id) {
 			continue
 		}
 		stage := filepath.Join(dir, entry.Name())
@@ -428,7 +432,7 @@ func lifecycleCycle(ctx context.Context, s *store, cluster *metadataCluster) err
 		if err != nil {
 			return err
 		}
-		return errMetadataQuorum
+		return etcd.ErrQuorum
 	}
 	return nil
 }

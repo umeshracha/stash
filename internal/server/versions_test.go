@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"stash/internal/fsutil"
 )
 
 func TestVersionHeadAfterRemovalAndRestart(t *testing.T) {
@@ -47,7 +49,7 @@ func TestVersionHeadAfterRemovalAndRestart(t *testing.T) {
 		}
 	}
 	put("legacy")
-	if err := writeMetadataFile(dir, versionConfig, []byte("Enabled")); err != nil {
+	if err := fsutil.WriteFileAtomic(dir, versionConfig, []byte("Enabled")); err != nil {
 		t.Fatal(err)
 	}
 	check("null", "legacy", false)
@@ -83,7 +85,7 @@ func TestVersionHeadAfterRemovalAndRestart(t *testing.T) {
 		t.Fatalf("expected abandoned staging file to be removed, got %v", err)
 	}
 	check(first.VersionID, "first", false)
-	if err := writeMetadataFile(dir, versionConfig, []byte("Suspended")); err != nil {
+	if err := fsutil.WriteFileAtomic(dir, versionConfig, []byte("Suspended")); err != nil {
 		t.Fatal(err)
 	}
 	put("new null")
@@ -106,7 +108,7 @@ func BenchmarkVersionHead(b *testing.B) {
 	if err := os.MkdirAll(history, 0700); err != nil {
 		b.Fatal(err)
 	}
-	if err := writeMetadataFile(dir, versionConfig, []byte("Enabled")); err != nil {
+	if err := fsutil.WriteFileAtomic(dir, versionConfig, []byte("Enabled")); err != nil {
 		b.Fatal(err)
 	}
 	const versions = 1000

@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"stash/internal/fsutil"
 )
 
 func TestReplicaInventoryBeyondLegacyLimit(t *testing.T) {
@@ -23,7 +25,7 @@ func TestReplicaInventoryBeyondLegacyLimit(t *testing.T) {
 	if err := os.Mkdir(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeMetadataFile(dir, versionConfig, []byte("Enabled")); err != nil {
+	if err := fsutil.WriteFileAtomic(dir, versionConfig, []byte("Enabled")); err != nil {
 		t.Fatal(err)
 	}
 	value := strings.Repeat("a", 60<<10)

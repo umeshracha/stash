@@ -1,4 +1,4 @@
-package server
+package upload
 
 import (
 	"bufio"
@@ -45,7 +45,7 @@ func TestSignedStreamRejectsTampering(t *testing.T) {
 				if err != nil || string(body) != "hello" {
 					t.Fatalf("unexpected stream: %q, %v", body, err)
 				}
-			} else if !errors.Is(err, errChecksum) {
+			} else if !errors.Is(err, ErrChecksum) {
 				t.Fatalf("expected checksum error, got %v", err)
 			}
 		})
@@ -90,7 +90,7 @@ func TestStreamingChecksumTrailer(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			reader := &chunkReader{
 				body: bufio.NewReader(strings.NewReader(tc.data)), expected: 5,
-				trailerName: name, checksum: checksumHasher("CRC32"),
+				trailerName: name, checksum: Hasher("CRC32"),
 			}
 			if tc.signed {
 				reader.signingKey, reader.scope, reader.date, reader.previous = key, scope, date, seed
@@ -101,7 +101,7 @@ func TestStreamingChecksumTrailer(t *testing.T) {
 				if err != nil || string(body) != "hello" || reader.trailerValue != value {
 					t.Fatalf("unexpected stream: %q, %q, %v", body, reader.trailerValue, err)
 				}
-			} else if !errors.Is(err, errChecksum) {
+			} else if !errors.Is(err, ErrChecksum) {
 				t.Fatalf("expected checksum error, got %v", err)
 			}
 		})

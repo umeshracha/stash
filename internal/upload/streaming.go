@@ -1,4 +1,4 @@
-package server
+package upload
 
 import (
 	"bufio"
@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"hash"
 	"io"
 	"net/http"
@@ -20,6 +21,25 @@ const signedStream = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
 
 const signedTrailerStream = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER"
 const unsignedTrailerStream = "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
+
+var ErrChecksum = errors.New("object checksum mismatch")
+var ErrTooLarge = errors.New("object exceeds the size limit")
+
+func IsStreaming(mode string) bool {
+	return mode == signedStream || mode == signedTrailerStream || mode == unsignedTrailerStream
+}
+
+func Trailer(r *http.Request) (name, value string) {
+	if reader, ok := r.Context().Value(streamingTrailerContext{}).(*chunkReader); ok {
+		return reader.trailerName, reader.trailerValue
+	}
+	return "", ""
+}
+
+func digest(data string) string {
+	sum := sha256.Sum256([]byte(data))
+	return hex.EncodeToString(sum[:])
+}
 
 type streamingTrailerContext struct{}
 
@@ -39,25 +59,25 @@ type chunkReader struct {
 	complete     bool
 }
 
-// unwrapStreamingUpload runs only after authorization verifies the request signature.
-func unwrapStreamingUpload(r *http.Request, c credential, region string, mode string) error {
+// Unwrap runs only after authorization verifies the request signature.
+func Unwrap(r *http.Request, secret, region, mode string, maxObject int64) error {
 	length, err := strconv.ParseInt(r.Header.Get("X-Amz-Decoded-Content-Length"), 10, 64)
 	if err != nil || length < 0 {
-		return errChecksum
+		return ErrChecksum
 	}
 	if length > maxObject {
-		return errTooLarge
+		return ErrTooLarge
 	}
 	reader := &chunkReader{body: bufio.NewReaderSize(r.Body, 4096), expected: length}
 	if mode != signedStream {
 		name := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Amz-Trailer")))
 		suffix, ok := strings.CutPrefix(name, "x-amz-checksum-")
 		algorithm := strings.ToUpper(suffix)
-		reader.checksum = checksumHasher(algorithm)
+		reader.checksum = Hasher(algorithm)
 		requested := r.Header.Get("X-Amz-Sdk-Checksum-Algorithm")
 		if !ok || reader.checksum == nil || len(r.Header.Values("X-Amz-Trailer")) != 1 ||
 			len(r.Header.Values(name)) != 0 || requested != "" && requested != algorithm {
-			return errChecksum
+			return ErrChecksum
 		}
 		reader.trailerName = name
 		*r = *r.WithContext(context.WithValue(r.Context(), streamingTrailerContext{}, reader))
@@ -65,7 +85,7 @@ func unwrapStreamingUpload(r *http.Request, c credential, region string, mode st
 	if mode != unsignedTrailerStream {
 		date := r.Header.Get("X-Amz-Date")
 		if len(date) < 8 {
-			return errChecksum
+			return ErrChecksum
 		}
 		for _, field := range strings.Split(r.Header.Get("Authorization"), ",") {
 			if value, ok := strings.CutPrefix(strings.TrimSpace(field), "Signature="); ok {
@@ -73,11 +93,11 @@ func unwrapStreamingUpload(r *http.Request, c credential, region string, mode st
 			}
 		}
 		if len(reader.previous) != 64 {
-			return errChecksum
+			return ErrChecksum
 		}
 		reader.date = date
 		reader.scope = date[:8] + "/" + region + "/s3/aws4_request"
-		reader.signingKey = sigv4.MAC([]byte("AWS4"+c.Secret), date[:8])
+		reader.signingKey = sigv4.MAC([]byte("AWS4"+secret), date[:8])
 		for _, value := range []string{region, "s3", "aws4_request"} {
 			reader.signingKey = sigv4.MAC(reader.signingKey, value)
 		}
@@ -110,20 +130,20 @@ func (r *chunkReader) Read(p []byte) (int, error) {
 	if r.remaining == 0 {
 		line, ok := r.readLine()
 		if !ok {
-			return 0, errChecksum
+			return 0, ErrChecksum
 		}
 		sizeText, signature, found := strings.Cut(line, ";chunk-signature=")
 		if found != (r.signingKey != nil) || found && len(signature) != 64 {
-			return 0, errChecksum
+			return 0, ErrChecksum
 		}
 		size, err := strconv.ParseUint(sizeText, 16, 63)
 		if err != nil || int64(size) > r.expected {
-			return 0, errChecksum
+			return 0, ErrChecksum
 		}
 		if found {
 			r.signature, err = hex.DecodeString(signature)
 			if err != nil {
-				return 0, errChecksum
+				return 0, ErrChecksum
 			}
 			r.hash.Reset()
 		}
@@ -131,7 +151,7 @@ func (r *chunkReader) Read(p []byte) (int, error) {
 		r.expected -= r.remaining
 		if size == 0 {
 			if r.expected != 0 || !r.verifyChunk() || !r.finishStream() {
-				return 0, errChecksum
+				return 0, ErrChecksum
 			}
 			r.complete = true
 			return 0, io.EOF
@@ -146,7 +166,7 @@ func (r *chunkReader) Read(p []byte) (int, error) {
 	}
 	r.remaining -= int64(n)
 	if err != nil || r.remaining == 0 && (!r.readSeparator() || !r.verifyChunk()) {
-		return n, errChecksum
+		return n, ErrChecksum
 	}
 	return n, nil
 }

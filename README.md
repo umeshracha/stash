@@ -24,9 +24,15 @@ Each credential maps bucket names to grants. A named grant takes precedence over
 | --- | --- |
 | `cmd/stash/` | Primary executable entry point. The root entry point also supports existing `go build .` callers. |
 | `internal/cli/` | Command-line flags shared by both entry points. |
-| `internal/server/` | Configuration, S3 operations, storage, replication, clustering, and operations. Tests live beside the code they exercise. |
+| `internal/server/` | S3 handlers, object metadata, lifecycle and replication orchestration, and coordinator state. |
 | `internal/server/web/` | Embedded admin console template. |
-| `internal/sigv4/` | AWS Signature Version 4 verification and request canonicalization. |
+| `internal/erasure/` | Erasure coding, shard storage and transport, quorum checks, and healing. |
+| `internal/encryption/` | Keyrings and authenticated encryption for object data. |
+| `internal/upload/` | Multipart checksum negotiation and signed streaming payload verification. |
+| `internal/sigv4/` | AWS Signature Version 4 request verification and canonicalization. |
+| `internal/etcd/` | Quorum metadata transport, transactions, and TLS configuration. |
+| `internal/audit/` | Request audit logs and log rotation. |
+| `internal/fsutil/`, `internal/netutil/` | Atomic file writes and loopback address checks. |
 | `tools/` | Repeatable performance benchmarks. |
 
 Run the Go tests with `go test ./...`.

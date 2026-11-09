@@ -5,21 +5,24 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"stash/internal/encryption"
+	"stash/internal/etcd"
 )
 
 func clusterActiveKey(local, authoritative []byte) (string, error) {
 	if len(local) == 0 && len(authoritative) == 0 {
 		return "", nil
 	}
-	configured, err := decodeKeyBinding(local)
+	configured, err := encryption.DecodeBinding(local)
 	if err != nil {
 		return "", err
 	}
-	required, err := decodeKeyBinding(authoritative)
+	required, err := encryption.DecodeBinding(authoritative)
 	if err != nil {
 		return "", err
 	}
-	if !configured.includes(required) {
+	if !configured.Includes(required) {
 		return "", errors.New("cluster coordinator is missing a required encryption key or fingerprint")
 	}
 	return required.Active, nil
@@ -36,7 +39,7 @@ func (cluster *metadataCluster) rotateEncryptionKey(active string) error {
 	if json.Unmarshal(encoded, &root) != nil || root.Format != "bucket-partitions-v1" || root.Generation != cluster.generation || len(root.Encryption) == 0 {
 		return errors.New("key rotation requires an existing encrypted cluster")
 	}
-	required, err := decodeKeyBinding(root.Encryption)
+	required, err := encryption.DecodeBinding(root.Encryption)
 	if err != nil {
 		return err
 	}
@@ -44,11 +47,11 @@ func (cluster *metadataCluster) rotateEncryptionKey(active string) error {
 	if err != nil {
 		return err
 	}
-	configured, err := decodeKeyBinding(local)
+	configured, err := encryption.DecodeBinding(local)
 	if err != nil {
 		return err
 	}
-	if !configured.includes(required) || configured.Keys[active] == "" {
+	if !configured.Includes(required) || configured.Keys[active] == "" {
 		return errors.New("rotation requires the new key and all previously committed keys")
 	}
 	if active == required.Active {
@@ -69,7 +72,7 @@ func (cluster *metadataCluster) rotateEncryptionKey(active string) error {
 		return err
 	}
 	if committed == "" {
-		return errMetadataQuorum
+		return etcd.ErrQuorum
 	}
 	return nil
 }

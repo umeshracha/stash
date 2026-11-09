@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"stash/internal/upload"
 )
 
 func (s *server) copyObject(w http.ResponseWriter, r *http.Request, c credential, bucket, key string) {
@@ -45,13 +47,13 @@ func (s *server) copyObject(w http.ResponseWriter, r *http.Request, c credential
 		copyRequest.Header = uploadHeaders(r.Header)
 	}
 	algorithm := r.Header.Get("X-Amz-Checksum-Algorithm")
-	if algorithm != "" && checksumHasher(algorithm) == nil {
+	if algorithm != "" && upload.Hasher(algorithm) == nil {
 		failure(w, 400, "InvalidRequest")
 		return
 	}
 	if algorithm == "" {
 		for _, candidate := range []string{"CRC32", "CRC32C", "CRC64NVME", "SHA1", "SHA256"} {
-			if obj.Headers.Get(checksumHeader(candidate)) != "" {
+			if obj.Headers.Get(upload.Header(candidate)) != "" {
 				algorithm = candidate
 				break
 			}
@@ -62,7 +64,7 @@ func (s *server) copyObject(w http.ResponseWriter, r *http.Request, c credential
 		payloadHash = "UNSIGNED-PAYLOAD"
 	}
 	copyRequest.Header.Set("X-Amz-Content-Sha256", payloadHash)
-	copyRequest = computeChecksum(copyRequest, algorithm)
+	copyRequest = upload.Compute(copyRequest, algorithm)
 
 	result, err := s.store.writeObject(filepath.Join(s.store.dir, bucket), key, copyRequest)
 	if err != nil {
@@ -78,8 +80,8 @@ func (s *server) copyObject(w http.ResponseWriter, r *http.Request, c credential
 		XMLName            xml.Name `xml:"CopyObjectResult"`
 		XMLNS              string   `xml:"xmlns,attr"`
 		LastModified, ETag string
-		checksumFields
-	}{XMLNS: s3Namespace, LastModified: result.Modified.Format(time.RFC3339Nano), ETag: result.ETag, checksumFields: checksumValues(result.Headers)})
+		upload.Fields
+	}{XMLNS: s3Namespace, LastModified: result.Modified.Format(time.RFC3339Nano), ETag: result.ETag, Fields: upload.Values(result.Headers)})
 }
 
 type copyLocation struct{ bucket, key, version string }
@@ -209,7 +211,7 @@ func copyRange(value string, size int64) (offset, count int64, valid bool) {
 	return start, end - start + 1, true
 }
 
-func (s *server) copyPart(w http.ResponseWriter, r *http.Request, c credential, stage, key string, number int, checksum multipartChecksum) {
+func (s *server) copyPart(w http.ResponseWriter, r *http.Request, c credential, stage, key string, number int, checksum upload.Checksum) {
 	if r.Header.Get("X-Amz-Metadata-Directive") != "" {
 		failure(w, 400, "InvalidArgument")
 		return
@@ -228,7 +230,7 @@ func (s *server) copyPart(w http.ResponseWriter, r *http.Request, c credential, 
 	copied.Body = io.NopCloser(io.NewSectionReader(data, offset, count))
 	copied.ContentLength = count
 	copied.Header = http.Header{"X-Amz-Content-Sha256": {"UNSIGNED-PAYLOAD"}}
-	part, err := s.store.stageObject(stage, key, computeChecksum(copied, checksum.Algorithm), func(file *os.File, obj *object) error {
+	part, err := s.store.stageObject(stage, key, upload.Compute(copied, checksum.Algorithm), func(file *os.File, obj *object) error {
 		return s.store.commitData(file, stage, partName(number), obj)
 	})
 	if err != nil {
@@ -243,7 +245,7 @@ func (s *server) copyPart(w http.ResponseWriter, r *http.Request, c credential, 
 		XMLName            xml.Name `xml:"CopyPartResult"`
 		XMLNS              string   `xml:"xmlns,attr"`
 		LastModified, ETag string
-		checksumFields
-	}{XMLNS: s3Namespace, LastModified: part.Modified.Format(time.RFC3339Nano), ETag: part.ETag, checksumFields: checksumValues(part.Headers)})
+		upload.Fields
+	}{XMLNS: s3Namespace, LastModified: part.Modified.Format(time.RFC3339Nano), ETag: part.ETag, Fields: upload.Values(part.Headers)})
 
 }

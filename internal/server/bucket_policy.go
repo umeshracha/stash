@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"stash/internal/fsutil"
 )
 
 const bucketPolicyFile = ".bucket-policy"
@@ -126,7 +128,7 @@ func (s *server) bucketPolicy(w http.ResponseWriter, r *http.Request, bucket str
 			failure(w, 400, "MalformedPolicy")
 			return
 		}
-		if err := writeMetadataFile(dir, bucketPolicyFile, body); err != nil {
+		if err := fsutil.WriteFileAtomic(dir, bucketPolicyFile, body); err != nil {
 			storageError(w, err, "NoSuchBucket")
 			return
 		}
@@ -134,7 +136,7 @@ func (s *server) bucketPolicy(w http.ResponseWriter, r *http.Request, bucket str
 	case http.MethodDelete:
 		err := os.Remove(path)
 		if err == nil {
-			err = syncDir(dir)
+			err = fsutil.SyncDir(dir)
 		}
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			storageError(w, err, "NoSuchBucket")

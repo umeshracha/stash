@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"stash/internal/fsutil"
 )
 
 const objectLockFile = ".object-lock"
@@ -75,7 +77,7 @@ func writeLockConfig(dir string, config lockConfiguration) error {
 	if err != nil {
 		return err
 	}
-	return writeMetadataFile(dir, objectLockFile, data)
+	return fsutil.WriteFileAtomic(dir, objectLockFile, data)
 }
 
 func lockXML(w http.ResponseWriter, r *http.Request, value any) bool {
@@ -279,7 +281,7 @@ func (s *server) versionProtection(w http.ResponseWriter, r *http.Request, c cre
 	}
 	data, err := json.Marshal(current)
 	if err == nil {
-		err = writeMetadataFile(dir, filepath.Base(protectionPath(dir, name, obj.VersionID)), data)
+		err = fsutil.WriteFileAtomic(dir, filepath.Base(protectionPath(dir, name, obj.VersionID)), data)
 	}
 	if err != nil {
 		s.store.resetReplicaFeed(dir)
@@ -374,7 +376,7 @@ func createLockedBucket(root, path string) error {
 		return err
 	}
 	defer os.RemoveAll(tmp)
-	if err := writeMetadataFile(tmp, versionConfig, []byte("Enabled")); err != nil {
+	if err := fsutil.WriteFileAtomic(tmp, versionConfig, []byte("Enabled")); err != nil {
 		return err
 	}
 	if err := writeLockConfig(tmp, lockConfiguration{Enabled: "Enabled"}); err != nil {

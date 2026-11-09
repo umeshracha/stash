@@ -15,7 +15,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"stash/internal/encryption"
+	"stash/internal/erasure"
+	"stash/internal/fsutil"
 	"stash/internal/sigv4"
+	"stash/internal/upload"
 )
 
 type server struct {
@@ -72,7 +76,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/readyz" && r.Method == http.MethodGet {
-		if s.store.erasure != nil && !s.store.erasure.ready() {
+		if s.store.erasure != nil && !s.store.erasure.Ready() {
 			w.WriteHeader(503)
 			return
 		}
@@ -241,8 +245,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mode := r.Header.Get("X-Amz-Content-Sha256")
-	if r.Method == http.MethodPut && (mode == signedStream || mode == signedTrailerStream || mode == unsignedTrailerStream) {
-		if err := unwrapStreamingUpload(r, c, s.region, mode); err != nil {
+	if r.Method == http.MethodPut && upload.IsStreaming(mode) {
+		if err := upload.Unwrap(r, c.Secret, s.region, mode, maxObject); err != nil {
 			storageError(w, err, "NoSuchBucket")
 			return
 		}
@@ -272,13 +276,13 @@ func storageError(w http.ResponseWriter, err error, missing string) {
 		failure(w, 403, "AccessDenied")
 	case errors.Is(err, errObjectLockDisabled):
 		failure(w, 400, "InvalidRequest")
-	case errors.Is(err, errReplicaDirty), errors.Is(err, errShardQuorum), errors.Is(err, errEncryptionUnavailable):
+	case errors.Is(err, errReplicaDirty), errors.Is(err, erasure.ErrQuorum), errors.Is(err, encryption.ErrUnavailable):
 		failure(w, 503, "ServiceUnavailable")
 	case errors.Is(err, os.ErrNotExist):
 		failure(w, 404, missing)
-	case errors.Is(err, errChecksum):
+	case errors.Is(err, upload.ErrChecksum):
 		failure(w, 400, "BadDigest")
-	case errors.Is(err, errTooLarge):
+	case errors.Is(err, upload.ErrTooLarge):
 		failure(w, 413, "EntityTooLarge")
 	default:
 		failure(w, 500, "InternalError")
@@ -350,7 +354,7 @@ func (s *server) bucket(w http.ResponseWriter, r *http.Request, bucket string, c
 			return
 		}
 
-		if err := syncDir(s.store.dir); err != nil {
+		if err := fsutil.SyncDir(s.store.dir); err != nil {
 			storageError(w, err, "NoSuchBucket")
 			return
 		}
@@ -397,7 +401,7 @@ func (s *server) bucket(w http.ResponseWriter, r *http.Request, bucket string, c
 			storageError(w, err, "NoSuchBucket")
 			return
 		}
-		if err := syncDir(s.store.dir); err != nil {
+		if err := fsutil.SyncDir(s.store.dir); err != nil {
 			storageError(w, err, "NoSuchBucket")
 			return
 		}
@@ -725,7 +729,7 @@ func (s *server) deleteObjects(w http.ResponseWriter, r *http.Request, bucket st
 			result.Deleted = append(result.Deleted, item)
 		}
 	}
-	if err := syncDir(dir); err != nil {
+	if err := fsutil.SyncDir(dir); err != nil {
 		storageError(w, err, "NoSuchBucket")
 		return
 	}

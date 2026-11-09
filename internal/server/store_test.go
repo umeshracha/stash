@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"stash/internal/upload"
 )
 
 func TestFailedOverwritePreservesObject(t *testing.T) {
@@ -30,7 +32,7 @@ func TestFailedOverwritePreservesObject(t *testing.T) {
 	if err := put("original", digest("original")); err != nil {
 		t.Fatal(err)
 	}
-	if err := put("replacement", digest("different")); !errors.Is(err, errChecksum) {
+	if err := put("replacement", digest("different")); !errors.Is(err, upload.ErrChecksum) {
 		t.Fatalf("expected checksum error, got %v", err)
 	}
 	file, err := os.Open(filepath.Join(dir, digest(key)))

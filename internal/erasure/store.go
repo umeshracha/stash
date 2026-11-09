@@ -1,4 +1,4 @@
-package server
+package erasure
 
 import (
 	"crypto/rand"
@@ -17,22 +17,24 @@ import (
 	"time"
 
 	"github.com/klauspost/reedsolomon"
+
+	"stash/internal/fsutil"
 )
 
 const shardBlockSize = 256 << 10
 const shardRecordSize = shardBlockSize + sha256.Size
-const erasureLayout = ".erasure-layout"
+const LayoutFile = ".erasure-layout"
 
-var errShardQuorum = errors.New("erasure shard quorum unavailable")
+var ErrQuorum = errors.New("erasure shard quorum unavailable")
 
-type erasureConfig struct {
-	Nodes  []shardNode `json:"nodes"`
-	Drives []string    `json:"drives"`
-	Parity int         `json:"parity"`
+type Config struct {
+	Nodes  []Node   `json:"nodes"`
+	Drives []string `json:"drives"`
+	Parity int      `json:"parity"`
 }
 
-type erasureStore struct {
-	nodes       []shardNode
+type Store struct {
+	nodes       []Node
 	client      *http.Client
 	scratch     string
 	id          string
@@ -44,8 +46,8 @@ type erasureStore struct {
 	code        reedsolomon.Encoder
 }
 
-func configureErasure(dir string, cfg *erasureConfig) (*erasureStore, error) {
-	saved, err := os.ReadFile(filepath.Join(dir, erasureLayout))
+func Open(dir string, cfg *Config) (*Store, error) {
+	saved, err := os.ReadFile(filepath.Join(dir, LayoutFile))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
@@ -64,9 +66,9 @@ func configureErasure(dir string, cfg *erasureConfig) (*erasureStore, error) {
 	}
 	drives := make([]string, n)
 	seen := make(map[string]bool, n)
-	nodes := make([]shardNode, len(cfg.Nodes))
+	nodes := make([]Node, len(cfg.Nodes))
 	for i, node := range cfg.Nodes {
-		node, err := validateShardNode(node)
+		node, err := ValidateNode(node)
 		if err != nil || seen[node.Endpoint] {
 			return nil, fmt.Errorf("invalid or duplicate shard node %d", i+1)
 		}
@@ -92,7 +94,7 @@ func configureErasure(dir string, cfg *erasureConfig) (*erasureStore, error) {
 		ID     string
 	}{Drives: drives, Parity: cfg.Parity}
 	if len(saved) != 0 {
-		if err := json.Unmarshal(saved, &layout); err != nil || !validVersion(layout.ID) || layout.ID == "null" ||
+		if err := json.Unmarshal(saved, &layout); err != nil || !ValidID(layout.ID) ||
 			len(layout.Drives) != n || layout.Parity != cfg.Parity {
 			return nil, errors.New("invalid or incompatible erasure layout")
 		}
@@ -117,7 +119,7 @@ func configureErasure(dir string, cfg *erasureConfig) (*erasureStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	ec := &erasureStore{roots: drives, namespace: ".stash-erasure-" + layout.ID, drives: make([]string, n),
+	ec := &Store{roots: drives, namespace: ".stash-erasure-" + layout.ID, drives: make([]string, n),
 		nodes: nodes, id: layout.ID, scratch: dir,
 		data: data, writeQuorum: max(data, n/2+1), code: code}
 	if len(nodes) != 0 {
@@ -143,7 +145,7 @@ func configureErasure(dir string, cfg *erasureConfig) (*erasureStore, error) {
 		drive := drives[i]
 		ec.drives[i] = filepath.Join(drive, ec.namespace)
 		if len(saved) == 0 {
-			if err := ec.initializeDrive(i); err != nil {
+			if err := ec.InitializeDrive(i); err != nil {
 				return nil, err
 			}
 		}
@@ -153,14 +155,14 @@ func configureErasure(dir string, cfg *erasureConfig) (*erasureStore, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := writeMetadataFile(dir, erasureLayout, encoded); err != nil {
+		if err := fsutil.WriteFileAtomic(dir, LayoutFile, encoded); err != nil {
 			return nil, err
 		}
 	}
 	return ec, nil
 }
 
-func (ec *erasureStore) initializeDrive(index int) error {
+func (ec *Store) InitializeDrive(index int) error {
 	if index < 0 || index >= len(ec.drives) {
 		return errors.New("erasure drive index out of range")
 	}
@@ -170,14 +172,14 @@ func (ec *erasureStore) initializeDrive(index int) error {
 	if err := os.Mkdir(ec.drives[index], 0700); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
 	}
-	return syncDir(ec.roots[index])
+	return fsutil.SyncDir(ec.roots[index])
 }
 
-func (ec *erasureStore) shardPath(index int, id string) string {
+func (ec *Store) shardPath(index int, id string) string {
 	return filepath.Join(ec.drives[index], id+".shard")
 }
 
-func (ec *erasureStore) encode(reader io.ReaderAt, size int64) (string, error) {
+func (ec *Store) Encode(reader io.ReaderAt, size int64) (string, error) {
 	var entropy [16]byte
 	rand.Read(entropy[:])
 	id := hex.EncodeToString(entropy[:])
@@ -199,7 +201,7 @@ func (ec *erasureStore) encode(reader io.ReaderAt, size int64) (string, error) {
 		}
 	}
 	if available < ec.writeQuorum {
-		return "", errShardQuorum
+		return "", ErrQuorum
 	}
 	stripeSize := int64(ec.data * shardBlockSize)
 	shards := make([][]byte, len(files))
@@ -233,7 +235,7 @@ func (ec *erasureStore) encode(reader io.ReaderAt, size int64) (string, error) {
 			}
 		}
 		if available < ec.writeQuorum {
-			return "", errShardQuorum
+			return "", ErrQuorum
 		}
 	}
 	written := ec.publishShards(files, id)
@@ -243,7 +245,7 @@ func (ec *erasureStore) encode(reader io.ReaderAt, size int64) (string, error) {
 				os.Remove(ec.shardPath(i, id))
 			}
 		}
-		return "", errShardQuorum
+		return "", ErrQuorum
 	}
 	return id, nil
 }
@@ -264,26 +266,26 @@ func publishShard(file *os.File, path string) error {
 	if err := os.Rename(file.Name(), path); err != nil {
 		return err
 	}
-	return syncDir(filepath.Dir(path))
+	return fsutil.SyncDir(filepath.Dir(path))
 }
 
 type erasureReader struct {
 	mu          sync.Mutex
 	block       []byte
 	cachedBlock int64
-	ec          *erasureStore
+	ec          *Store
 	size        int64
 	files       []shardReader
 }
 
-func (ec *erasureStore) open(obj object) (*erasureReader, error) {
-	if !validVersion(obj.ErasureID) || obj.ErasureID == "null" {
+func (ec *Store) OpenObject(id string, size int64) (*erasureReader, error) {
+	if !ValidID(id) {
 		return nil, errors.New("invalid erasure object id")
 	}
-	r := &erasureReader{ec: ec, size: obj.payloadSize(), files: make([]shardReader, len(ec.drives)), cachedBlock: -1}
+	r := &erasureReader{ec: ec, size: size, files: make([]shardReader, len(ec.drives)), cachedBlock: -1}
 	var wg sync.WaitGroup
 	for i := range r.files {
-		wg.Go(func() { r.files[i] = ec.openShard(i, obj.ErasureID) })
+		wg.Go(func() { r.files[i] = ec.openShard(i, id) })
 	}
 	wg.Wait()
 	count := 0
@@ -294,7 +296,7 @@ func (ec *erasureStore) open(obj object) (*erasureReader, error) {
 	}
 	if count < ec.data {
 		r.Close()
-		return nil, errShardQuorum
+		return nil, ErrQuorum
 	}
 	return r, nil
 }
@@ -343,7 +345,7 @@ func (r *erasureReader) ReadAt(p []byte, offset int64) (int, error) {
 			if !readShardBlock(r.files[index], stripe, r.block) {
 				shards := r.readStripe(stripe)
 				if err := r.ec.code.ReconstructData(shards); err != nil {
-					return total, errShardQuorum
+					return total, ErrQuorum
 				}
 				copy(r.block, shards[index])
 			}
@@ -382,14 +384,14 @@ func (r *erasureReader) readStripe(stripe int64) [][]byte {
 }
 
 // heal verifies every stripe and replaces damaged shards only after a complete reconstruction.
-func (ec *erasureStore) heal(obj object) (int, error) {
-	reader, err := ec.open(obj)
+func (ec *Store) Heal(id string, size int64) (int, error) {
+	reader, err := ec.OpenObject(id, size)
 	if err != nil {
 		return 0, err
 	}
 	defer reader.Close()
 	stripeSize := int64(ec.data * shardBlockSize)
-	stripes := (obj.payloadSize() + stripeSize - 1) / stripeSize
+	stripes := (size + stripeSize - 1) / stripeSize
 	damaged := make([]bool, len(reader.files))
 	block := make([]byte, shardBlockSize)
 	count := 0
@@ -430,7 +432,7 @@ func (ec *erasureStore) heal(obj object) (int, error) {
 	for stripe := int64(0); stripe < stripes; stripe++ {
 		shards := reader.readStripe(stripe)
 		if err := ec.code.Reconstruct(shards); err != nil {
-			return 0, errShardQuorum
+			return 0, ErrQuorum
 		}
 		for i, file := range staging {
 			if file != nil {
@@ -440,134 +442,14 @@ func (ec *erasureStore) heal(obj object) (int, error) {
 			}
 		}
 	}
-	repaired := ec.publishShards(staging, obj.ErasureID)
+	repaired := ec.publishShards(staging, id)
 	if repaired < count {
-		return repaired, errShardQuorum
+		return repaired, ErrQuorum
 	}
 	return repaired, nil
 }
 
-type objectReader interface {
-	io.ReaderAt
-	io.Closer
-}
-
-func (s *store) objectData(file *os.File, obj object) (objectReader, error) {
-	var data objectReader = file
-	if obj.ErasureID != "" {
-		file.Close()
-		if s.erasure == nil {
-			return nil, errShardQuorum
-		}
-		reader, err := s.erasure.open(obj)
-		if err != nil {
-			return nil, err
-		}
-		data = reader
-	}
-	if obj.Encryption == nil {
-		return data, nil
-	}
-	aead, err := s.encryption.cipher(obj.Encryption)
-	if err != nil {
-		data.Close()
-		return nil, err
-	}
-	return &decryptReader{objectReader: data, aead: aead, size: obj.Size, aad: []byte(obj.Key), cached: -1,
-		ciphertext: make([]byte, encryptionBlock+encryptionTagSize), plaintext: make([]byte, 0, encryptionBlock)}, nil
-}
-
-func (s *store) commitData(file *os.File, dir, name string, obj *object) error {
-	if s.erasure != nil && !obj.DeleteMarker && obj.Size > 0 {
-		id, err := s.erasure.encode(file, obj.payloadSize())
-		if err != nil {
-			return err
-		}
-		obj.ErasureID = id
-		if err := file.Truncate(0); err != nil {
-			return err
-		}
-		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			return err
-		}
-	}
-	return commitObject(file, dir, name, *obj)
-}
-
-func (s *store) healAll(cleanup bool) error {
-	if s.erasure == nil {
-		return errors.New("healing requires an erasure configuration")
-	}
-	buckets, err := os.ReadDir(s.dir)
-	if err != nil {
-		return err
-	}
-	var failed error
-	referenced := make(map[string]bool)
-	visit := func(bucket string, obj object) {
-		if obj.ErasureID == "" || referenced[obj.ErasureID] {
-			return
-		}
-		referenced[obj.ErasureID] = true
-		repaired, err := s.erasure.heal(obj)
-		if repaired > 0 {
-			fmt.Printf("Repaired %d shards for %s version %s\n", repaired, bucket, obj.VersionID)
-		}
-		if err != nil {
-			failed = errors.Join(failed, fmt.Errorf("%s shard set %s: %w", bucket, obj.ErasureID, err))
-		}
-	}
-	for _, bucket := range buckets {
-		if !bucket.IsDir() || !bucketName.MatchString(bucket.Name()) {
-			continue
-		}
-		dir := filepath.Join(s.dir, bucket.Name())
-		names, err := versionNames(dir)
-		if err != nil {
-			return err
-		}
-		for _, name := range names {
-			versions, err := versionsFor(dir, name)
-			if err != nil {
-				return err
-			}
-			for _, version := range versions {
-				visit(bucket.Name(), version.object)
-			}
-		}
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			return err
-		}
-		for _, entry := range entries {
-			id, ok := strings.CutPrefix(entry.Name(), ".mp-")
-			if !ok || !shardID(id) {
-				continue
-			}
-			stage := filepath.Join(dir, entry.Name())
-			parts, err := os.ReadDir(stage)
-			if err != nil {
-				return err
-			}
-			for _, part := range parts {
-				if !strings.HasPrefix(part.Name(), "part-") {
-					continue
-				}
-				obj, err := metadataAt(filepath.Join(stage, part.Name()))
-				if err != nil {
-					return err
-				}
-				visit(bucket.Name(), obj)
-			}
-		}
-	}
-	if failed != nil || !cleanup {
-		return failed
-	}
-	return s.erasure.removeUnreferenced(referenced)
-}
-
-func (ec *erasureStore) removeUnreferenced(referenced map[string]bool) error {
+func (ec *Store) RemoveUnreferenced(referenced map[string]bool) error {
 	if len(ec.nodes) != 0 {
 		return ec.removeUnreferencedRemote(referenced)
 	}
@@ -583,7 +465,7 @@ func (ec *erasureStore) removeUnreferenced(referenced map[string]bool) error {
 		for _, entry := range entries {
 			name := entry.Name()
 			id, isShard := strings.CutSuffix(name, ".shard")
-			if !isShard || !validVersion(id) || id == "null" || referenced[id] || !entry.Type().IsRegular() {
+			if !isShard || !ValidID(id) || referenced[id] || !entry.Type().IsRegular() {
 				continue
 			}
 			if err := os.Remove(filepath.Join(drive, name)); err != nil {
@@ -592,7 +474,7 @@ func (ec *erasureStore) removeUnreferenced(referenced map[string]bool) error {
 			changed = true
 		}
 		if changed {
-			if err := syncDir(drive); err != nil {
+			if err := fsutil.SyncDir(drive); err != nil {
 				return err
 			}
 		}
@@ -601,7 +483,8 @@ func (ec *erasureStore) removeUnreferenced(referenced map[string]bool) error {
 }
 
 type shardReader interface {
-	objectReader
+	io.ReaderAt
+	io.Closer
 	shardSize() int64
 }
 
@@ -613,19 +496,19 @@ type localShard struct {
 func (s localShard) shardSize() int64   { return s.size }
 func (s *remoteShard) shardSize() int64 { return s.size }
 
-func (ec *erasureStore) stage(index int, prefix string) (*os.File, error) {
+func (ec *Store) stage(index int, prefix string) (*os.File, error) {
 	if len(ec.nodes) != 0 {
 		return os.CreateTemp(ec.scratch, prefix)
 	}
 	return os.CreateTemp(ec.drives[index], prefix)
 }
 
-func (ec *erasureStore) peer(index int, id string) *remoteShard {
+func (ec *Store) peer(index int, id string) *remoteShard {
 	node := ec.nodes[index]
 	return &remoteShard{client: ec.client, endpoint: node.Endpoint + shardRoute + ec.id + "/" + id, token: node.Token}
 }
 
-func (ec *erasureStore) openShard(index int, id string) shardReader {
+func (ec *Store) openShard(index int, id string) shardReader {
 	if len(ec.nodes) != 0 {
 		shard := ec.peer(index, id)
 		response, err := shard.request(http.MethodHead, nil, 0, "")
@@ -651,7 +534,7 @@ func (ec *erasureStore) openShard(index int, id string) shardReader {
 	return localShard{File: file, size: info.Size()}
 }
 
-func (ec *erasureStore) publishShards(files []*os.File, id string) int {
+func (ec *Store) publishShards(files []*os.File, id string) int {
 	var wg sync.WaitGroup
 	results := make([]bool, len(files))
 	for i, file := range files {
@@ -685,21 +568,21 @@ func (ec *erasureStore) publishShards(files []*os.File, id string) int {
 	return written
 }
 
-func (ec *erasureStore) removeUnreferencedRemote(referenced map[string]bool) error {
+func (ec *Store) removeUnreferencedRemote(referenced map[string]bool) error {
 	for i, node := range ec.nodes {
 		inventory := &remoteShard{client: ec.client, endpoint: node.Endpoint + shardRoute + ec.id, token: node.Token}
 		response, err := inventory.request(http.MethodGet, nil, 0, "")
 		if err != nil {
 			return fmt.Errorf("shard node %d inventory: %w", i+1, err)
 		}
-		data, readErr := io.ReadAll(io.LimitReader(response.Body, maxManifest+1))
+		data, readErr := io.ReadAll(io.LimitReader(response.Body, maxShardInventory+1))
 		response.Body.Close()
 		var ids []string
-		if readErr != nil || response.StatusCode != http.StatusOK || len(data) > maxManifest || json.Unmarshal(data, &ids) != nil {
+		if readErr != nil || response.StatusCode != http.StatusOK || len(data) > maxShardInventory || json.Unmarshal(data, &ids) != nil {
 			return fmt.Errorf("invalid inventory from shard node %d", i+1)
 		}
 		for _, id := range ids {
-			if !shardID(id) {
+			if !ValidID(id) {
 				return fmt.Errorf("invalid shard id from node %d", i+1)
 			}
 			if referenced[id] {
@@ -719,7 +602,7 @@ func (ec *erasureStore) removeUnreferencedRemote(referenced map[string]bool) err
 }
 
 // Readiness requires enough reachable shard locations for a write.
-func (ec *erasureStore) ready() bool {
+func (ec *Store) Ready() bool {
 	results := make([]bool, len(ec.drives))
 	var wg sync.WaitGroup
 	for i := range results {

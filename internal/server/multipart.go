@@ -21,7 +21,9 @@ import (
 	"strings"
 	"time"
 
+	"stash/internal/fsutil"
 	"stash/internal/sigv4"
+	"stash/internal/upload"
 )
 
 const (
@@ -31,7 +33,7 @@ const (
 )
 
 type uploadInfo struct {
-	Checksum   multipartChecksum `json:",omitempty"`
+	Checksum   upload.Checksum   `json:",omitempty"`
 	Created    time.Time         `json:",omitempty"`
 	Protection *objectProtection `json:",omitempty"`
 	Key        string
@@ -109,11 +111,11 @@ func (s *server) multipart(w http.ResponseWriter, r *http.Request, bucket, key s
 			failure(w, 501, "NotImplemented")
 			return
 		}
-		if !validatePartChecksumRequest(r, info.Checksum) {
+		if !upload.ValidatePart(r, info.Checksum) {
 			failure(w, 400, "InvalidRequest")
 			return
 		}
-		part, err := s.store.stageObject(stage, key, computeChecksum(r, info.Checksum.Algorithm), func(file *os.File, obj *object) error {
+		part, err := s.store.stageObject(stage, key, upload.Compute(r, info.Checksum.Algorithm), func(file *os.File, obj *object) error {
 			return s.store.commitData(file, stage, partName(number), obj)
 		})
 		if err != nil {
@@ -162,7 +164,7 @@ func startUpload(w http.ResponseWriter, r *http.Request, dir, bucket, key string
 			return
 		}
 	}
-	checksum, valid := resolveMultipartChecksum(r.Header.Get("X-Amz-Checksum-Algorithm"), r.Header.Get(checksumTypeHeader))
+	checksum, valid := upload.Resolve(r.Header.Get("X-Amz-Checksum-Algorithm"), r.Header.Get(upload.TypeHeader))
 	if !valid {
 		failure(w, 400, "InvalidRequest")
 		return
@@ -191,13 +193,13 @@ func startUpload(w http.ResponseWriter, r *http.Request, dir, bucket, key string
 	_, writeErr := manifest.Write(raw)
 	err = errors.Join(writeErr, manifest.Sync(), manifest.Close())
 	if err == nil {
-		err = syncDir(tmp)
+		err = fsutil.SyncDir(tmp)
 	}
 	if err == nil {
 		err = os.Rename(tmp, filepath.Join(dir, ".mp-"+id))
 	}
 	if err == nil {
-		err = syncDir(dir)
+		err = fsutil.SyncDir(dir)
 	}
 	if err != nil {
 		storageError(w, err, "NoSuchBucket")
@@ -208,7 +210,7 @@ func startUpload(w http.ResponseWriter, r *http.Request, dir, bucket, key string
 	}
 	if checksum.Algorithm != "" {
 		w.Header().Set("X-Amz-Checksum-Algorithm", checksum.Algorithm)
-		w.Header().Set(checksumTypeHeader, checksum.Type)
+		w.Header().Set(upload.TypeHeader, checksum.Type)
 	}
 	respond(w, 200, struct {
 		XMLName               xml.Name `xml:"InitiateMultipartUploadResult"`
@@ -224,10 +226,10 @@ type listedPart struct {
 	LastModified string
 	ETag         string
 	Size         int64
-	checksumFields
+	upload.Fields
 }
 
-func listParts(w http.ResponseWriter, q url.Values, stage, bucket, key, id string, checksum multipartChecksum) {
+func listParts(w http.ResponseWriter, q url.Values, stage, bucket, key, id string, checksum upload.Checksum) {
 	for name := range q {
 		if name != "uploadId" && name != "max-parts" && name != "part-number-marker" {
 			failure(w, 400, "InvalidArgument")
@@ -287,7 +289,7 @@ func listParts(w http.ResponseWriter, q url.Values, stage, bucket, key, id strin
 		}
 		result.Parts = append(result.Parts, listedPart{
 			PartNumber: number, LastModified: part.Modified.Format(time.RFC3339), ETag: part.ETag,
-			Size: part.Size, checksumFields: checksumValues(part.Headers),
+			Size: part.Size, Fields: upload.Values(part.Headers),
 		})
 
 		result.NextPartNumberMarker = number
@@ -300,7 +302,7 @@ func discardUpload(dir, stage string) error {
 	if err := os.Rename(stage, trash); err != nil {
 		return err
 	}
-	if err := syncDir(dir); err != nil {
+	if err := fsutil.SyncDir(dir); err != nil {
 		return err
 	}
 	if err := os.RemoveAll(trash); err != nil {
@@ -319,7 +321,7 @@ func (s *store) completeUpload(w http.ResponseWriter, r *http.Request, dir, stag
 		failure(w, 400, "BadDigest")
 		return
 	}
-	if !completeChecksumRequest(r, info.Checksum) {
+	if !upload.ValidateCompletion(r, info.Checksum) {
 		failure(w, 400, "InvalidRequest")
 		return
 	}
@@ -329,7 +331,7 @@ func (s *store) completeUpload(w http.ResponseWriter, r *http.Request, dir, stag
 		Parts   []struct {
 			PartNumber int
 			ETag       string
-			checksumFields
+			upload.Fields
 		} `xml:"Part"`
 	}
 	if xml.Unmarshal(body, &request) != nil || len(request.Parts) == 0 || len(request.Parts) > maxParts {
@@ -338,7 +340,7 @@ func (s *store) completeUpload(w http.ResponseWriter, r *http.Request, dir, stag
 	}
 	previous := 0
 	for i, part := range request.Parts {
-		if part.PartNumber <= previous || part.PartNumber > maxParts || info.Checksum.Type == checksumComposite && part.PartNumber != i+1 {
+		if part.PartNumber <= previous || part.PartNumber > maxParts || info.Checksum.Type == upload.Composite && part.PartNumber != i+1 {
 			failure(w, 400, "InvalidPartOrder")
 			return
 		}
@@ -367,7 +369,7 @@ func (s *store) completeUpload(w http.ResponseWriter, r *http.Request, dir, stag
 	}
 	combined := md5.New()
 	contentHash := sha256.New()
-	finalChecksum := checksumHasher(info.Checksum.Algorithm)
+	finalChecksum := upload.Hasher(info.Checksum.Algorithm)
 	if info.Headers == nil {
 		info.Headers = make(http.Header)
 	}
@@ -389,7 +391,7 @@ func (s *store) completeUpload(w http.ResponseWriter, r *http.Request, dir, stag
 			return
 		}
 		if strings.Trim(requested.ETag, `"`) != strings.Trim(part.ETag, `"`) ||
-			!requested.checksumFields.matches(part.Headers) {
+			!requested.Fields.Matches(part.Headers) {
 			partFile.Close()
 			failure(w, 400, "InvalidPart")
 			return
@@ -412,10 +414,10 @@ func (s *store) completeUpload(w http.ResponseWriter, r *http.Request, dir, stag
 		}
 		check := md5.New()
 		writers := []io.Writer{out, check, contentHash}
-		partChecksum := checksumHasher(info.Checksum.Algorithm)
+		partChecksum := upload.Hasher(info.Checksum.Algorithm)
 		if partChecksum != nil {
 			writers = append(writers, partChecksum)
-			if info.Checksum.Type == checksumFull {
+			if info.Checksum.Type == upload.Full {
 				writers = append(writers, finalChecksum)
 			}
 		}
@@ -427,11 +429,11 @@ func (s *store) completeUpload(w http.ResponseWriter, r *http.Request, dir, stag
 		}
 		if partChecksum != nil {
 			raw := partChecksum.Sum(nil)
-			if part.Headers.Get(checksumHeader(info.Checksum.Algorithm)) != base64.StdEncoding.EncodeToString(raw) {
+			if part.Headers.Get(upload.Header(info.Checksum.Algorithm)) != base64.StdEncoding.EncodeToString(raw) {
 				failure(w, 400, "InvalidPart")
 				return
 			}
-			if info.Checksum.Type == checksumComposite {
+			if info.Checksum.Type == upload.Composite {
 				finalChecksum.Write(raw)
 			}
 		}
@@ -446,14 +448,14 @@ func (s *store) completeUpload(w http.ResponseWriter, r *http.Request, dir, stag
 		}
 	}
 	if finalChecksum != nil {
-		name := checksumHeader(info.Checksum.Algorithm)
-		value := completedChecksum(finalChecksum, info.Checksum.Type, len(request.Parts))
+		name := upload.Header(info.Checksum.Algorithm)
+		value := upload.Completed(finalChecksum, info.Checksum.Type, len(request.Parts))
 		if expected := r.Header.Get(name); expected != "" && expected != value {
 			failure(w, 400, "BadDigest")
 			return
 		}
 		obj.Headers.Set(name, value)
-		obj.Headers.Set(checksumTypeHeader, info.Checksum.Type)
+		obj.Headers.Set(upload.TypeHeader, info.Checksum.Type)
 	}
 	obj.Encryption, err = finish()
 	if err != nil {
@@ -480,9 +482,9 @@ func multipartResult(w http.ResponseWriter, bucket string, obj object) {
 		XMLNS                       string   `xml:"xmlns,attr"`
 		Location, Bucket, Key, ETag string
 		ChecksumType                string `xml:",omitempty"`
-		checksumFields
+		upload.Fields
 	}{XMLNS: s3Namespace, Location: "/" + bucket + "/" + sigv4.Encode(obj.Key, true), Bucket: bucket, Key: obj.Key, ETag: obj.ETag,
-		ChecksumType: obj.Headers.Get(checksumTypeHeader), checksumFields: checksumValues(obj.Headers)})
+		ChecksumType: obj.Headers.Get(upload.TypeHeader), Fields: upload.Values(obj.Headers)})
 
 }
 

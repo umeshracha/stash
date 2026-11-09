@@ -11,7 +11,6 @@ import (
 	"errors"
 	"hash"
 	"hash/crc32"
-	"hash/crc64"
 	"io"
 	"net/http"
 	"os"
@@ -20,17 +19,19 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"stash/internal/encryption"
+	"stash/internal/erasure"
+	"stash/internal/fsutil"
+	"stash/internal/upload"
 )
 
 const maxObject = 5 * 1024 * 1024 * 1024
 const maxMetadata = 64 << 10
 
-var errChecksum = errors.New("object checksum mismatch")
-var errTooLarge = errors.New("object exceeds the size limit")
-
 type store struct {
-	encryption     *encryptionKeys
-	erasure        *erasureStore
+	encryption     *encryption.Keys
+	erasure        *erasure.Store
 	dir            string
 	lock           *os.File
 	mu             sync.RWMutex
@@ -42,9 +43,9 @@ type store struct {
 }
 
 type object struct {
-	Encryption   *encryptedObject  `json:",omitempty"`
-	Protection   *objectProtection `json:",omitempty"`
-	ErasureID    string            `json:",omitempty"`
+	Encryption   *encryption.Metadata `json:",omitempty"`
+	Protection   *objectProtection    `json:",omitempty"`
+	ErasureID    string               `json:",omitempty"`
 	Key          string
 	Size         int64
 	ETag         string
@@ -85,15 +86,6 @@ func openStoreMode(root string, recoverLocal bool) (*store, error) {
 
 func (s *store) close() { s.lock.Close() }
 
-func syncDir(path string) error {
-	dir, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
-}
-
 func (s *store) put(bucket, key string, r *http.Request) (object, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -110,7 +102,7 @@ func (s *store) writeObject(dir, key string, r *http.Request) (object, error) {
 
 func (s *store) stageObject(dir, key string, r *http.Request, publish func(*os.File, *object) error) (object, error) {
 	if r.ContentLength > maxObject {
-		return object{}, errTooLarge
+		return object{}, upload.ErrTooLarge
 	}
 	file, err := os.CreateTemp(dir, ".upload-*")
 	if err != nil {
@@ -120,12 +112,12 @@ func (s *store) stageObject(dir, key string, r *http.Request, publish func(*os.F
 	defer file.Close()
 
 	md5Hash, shaHash, checksums := objectHashes(r.Header)
-	algorithm, _ := r.Context().Value(checksumContext{}).(string)
+	algorithm := upload.ComputedAlgorithm(r)
 	computedHeader := ""
 	if algorithm != "" {
-		computedHeader = checksumHeader(algorithm)
+		computedHeader = upload.Header(algorithm)
 		if checksums[computedHeader] == nil {
-			checksums[computedHeader] = checksumHasher(algorithm)
+			checksums[computedHeader] = upload.Hasher(algorithm)
 		}
 	}
 	out, finish, err := s.stagingWriter(file, key)
@@ -142,10 +134,10 @@ func (s *store) stageObject(dir, key string, r *http.Request, publish func(*os.F
 		return object{}, err
 	}
 	if size > maxObject {
-		return object{}, errTooLarge
+		return object{}, upload.ErrTooLarge
 	}
 	if value := r.Header.Get("X-Amz-Content-Sha256"); value != "UNSIGNED-PAYLOAD" && value != hex.EncodeToString(shaHash.Sum(nil)) {
-		return object{}, errChecksum
+		return object{}, upload.ErrChecksum
 	}
 	metadata := object{Key: key, Size: size, ETag: `"` + hex.EncodeToString(md5Hash.Sum(nil)) + `"`, Modified: time.Now().UTC(), Headers: http.Header{}, SHA256: hex.EncodeToString(shaHash.Sum(nil))}
 	for name, checksum := range checksums {
@@ -154,7 +146,7 @@ func (s *store) stageObject(dir, key string, r *http.Request, publish func(*os.F
 		}
 		if value := r.Header.Get(name); value != "" {
 			if value != base64.StdEncoding.EncodeToString(checksum.Sum(nil)) {
-				return object{}, errChecksum
+				return object{}, upload.ErrChecksum
 			}
 			if strings.HasPrefix(name, "X-Amz-") {
 				metadata.Headers.Set(name, value)
@@ -162,8 +154,8 @@ func (s *store) stageObject(dir, key string, r *http.Request, publish func(*os.F
 		}
 	}
 	// The streaming decoder publishes its verified checksum after consuming the body.
-	if stream, ok := r.Context().Value(streamingTrailerContext{}).(*chunkReader); ok {
-		metadata.Headers.Set(stream.trailerName, stream.trailerValue)
+	if name, value := upload.Trailer(r); name != "" {
+		metadata.Headers.Set(name, value)
 	}
 	for name, values := range uploadHeaders(r.Header) {
 		metadata.Headers[name] = values
@@ -189,7 +181,7 @@ func uploadHeaders(headers http.Header) http.Header {
 func commitObject(file *os.File, dir, name string, metadata object) error {
 	body, err := json.Marshal(metadata)
 	if err != nil || len(body) > maxMetadata {
-		return errTooLarge
+		return upload.ErrTooLarge
 	}
 	footer := binary.BigEndian.AppendUint32(nil, uint32(len(body)))
 	if _, err := file.Write(append(body, footer...)); err != nil {
@@ -204,7 +196,7 @@ func commitObject(file *os.File, dir, name string, metadata object) error {
 	if err := os.Rename(file.Name(), filepath.Join(dir, name)); err != nil {
 		return err
 	}
-	return syncDir(dir)
+	return fsutil.SyncDir(dir)
 }
 
 func readMetadata(file *os.File) (object, error) {
@@ -246,7 +238,7 @@ func objectHashes(headers http.Header) (hash.Hash, hash.Hash, map[string]hash.Ha
 		}
 	}
 	if name := "X-Amz-Checksum-Crc64nvme"; headers.Get(name) != "" {
-		checksums[name] = crc64.New(nvmeTable)
+		checksums[name] = upload.Hasher("CRC64NVME")
 	}
 	return md5Hash, shaHash, checksums
 }

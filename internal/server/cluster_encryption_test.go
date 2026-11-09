@@ -3,12 +3,14 @@ package server
 import (
 	"encoding/json"
 	"testing"
+
+	"stash/internal/encryption"
 )
 
 func TestClusterKeyRotationRequiresAuthoritativeKeyring(t *testing.T) {
 	bind := func(active string, keys map[string]string) []byte {
 		t.Helper()
-		data, err := json.Marshal(keyBinding{encryptionVersion, active, keys})
+		data, err := json.Marshal(encryption.Binding{Version: encryption.Version, Active: active, Keys: keys})
 		if err != nil {
 			t.Fatal(err)
 		}

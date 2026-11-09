@@ -6,16 +6,19 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	"stash/internal/encryption"
+	"stash/internal/erasure"
 )
 
 type config struct {
-	Encryption         *encryptionConfig        `json:"encryption"`
+	Encryption         *encryption.Config       `json:"encryption"`
 	AuditLog           bool                     `json:"audit_log"`
 	Policies           map[string]accessPolicy  `json:"policies"`
 	Admin              *adminConfig             `json:"admin"`
 	Cluster            *clusterConfig           `json:"cluster"`
 	ShardNodeToken     string                   `json:"shard_node_token"`
-	Erasure            *erasureConfig           `json:"erasure"`
+	Erasure            *erasure.Config          `json:"erasure"`
 	ReplicationExports map[string]string        `json:"replication_exports"`
 	ReplicaBuckets     map[string]replicaSource `json:"replica_buckets"`
 	PromoteBuckets     []string                 `json:"promote_buckets"`

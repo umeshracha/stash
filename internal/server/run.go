@@ -6,6 +6,10 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"stash/internal/audit"
+	"stash/internal/encryption"
+	"stash/internal/erasure"
 )
 
 // Options selects an offline maintenance operation when serving is unnecessary.
@@ -38,12 +42,12 @@ func Run(path string, options Options) error {
 			len(cfg.ReplicationExports) != 0 || len(cfg.ReplicaBuckets) != 0 || len(cfg.PromoteBuckets) != 0 {
 			return fmt.Errorf("shard nodes require a token of at least 24 bytes and a dedicated configuration")
 		}
-		return serve(cfg, shardNodeHandler{dir: store.dir, token: cfg.ShardNodeToken})
+		return serve(cfg, erasure.NewHandler(store.dir, cfg.ShardNodeToken))
 	}
 	if cfg.Cluster != nil && options.ReplaceErasureDrive != 0 {
 		return fmt.Errorf("start the replacement shard node at its original endpoint and use -heal")
 	}
-	store.encryption, err = configureEncryption(store.dir, cfg.Encryption)
+	store.encryption, err = encryption.Open(store.dir, cfg.Encryption)
 	if err != nil {
 		return err
 	}
@@ -54,7 +58,7 @@ func Run(path string, options Options) error {
 	if options.RotateClusterKey {
 		return cluster.rotateEncryptionKey(cfg.Encryption.ActiveKey)
 	}
-	store.erasure, err = configureErasure(store.dir, cfg.Erasure)
+	store.erasure, err = erasure.Open(store.dir, cfg.Erasure)
 	if err != nil {
 		return err
 	}
@@ -62,7 +66,7 @@ func Run(path string, options Options) error {
 		if store.erasure == nil {
 			return fmt.Errorf("replacement requires an erasure configuration")
 		}
-		if err := store.erasure.initializeDrive(options.ReplaceErasureDrive - 1); err != nil {
+		if err := store.erasure.InitializeDrive(options.ReplaceErasureDrive - 1); err != nil {
 			return err
 		}
 		options.Heal = true
@@ -96,16 +100,16 @@ func Run(path string, options Options) error {
 	if cluster != nil {
 		handler = cluster.wrap(handler)
 	}
-	var audit *auditLog
+	var auditLog *audit.Log
 	if cfg.AuditLog {
-		audit, err = openAuditLog(store.dir)
+		auditLog, err = audit.Open(store.dir)
 		if err != nil {
 			return err
 		}
-		defer audit.close()
+		defer auditLog.Close()
 	}
-	if stats != nil || audit != nil {
-		handler = trackRequests(handler, stats, audit)
+	if stats != nil || auditLog != nil {
+		handler = trackRequests(handler, stats, auditLog)
 	}
 	return serve(cfg, handler)
 }

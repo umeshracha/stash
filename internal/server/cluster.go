@@ -4,15 +4,12 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,14 +18,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"stash/internal/encryption"
+	"stash/internal/erasure"
+	"stash/internal/etcd"
+	"stash/internal/fsutil"
 )
 
 const clusterBinding = ".cluster-bound"
 const clusterInitialized = ".cluster-initialized"
 const maxClusterSnapshot = 768 << 10
 const maxClusterDecoded = 16 << 20
-
-var errMetadataQuorum = errors.New("cluster metadata quorum unavailable")
 
 type clusterConfig struct {
 	CAFile     string   `json:"ca_file"`
@@ -40,37 +40,22 @@ type clusterConfig struct {
 }
 
 type metadataCluster struct {
-	lastReadEndpoint string
-	etcdID           string
-	config           clusterConfig
-	key              string
-	client           *http.Client
-	mu               sync.Mutex
-	revision         string
-	partitions       map[string]metadataPartition
-	partitioned      bool
-	generation       string
-	readRevision     string
-	store            *store
+	config       clusterConfig
+	key          string
+	etcd         *etcd.Client
+	mu           sync.Mutex
+	revision     string
+	partitions   map[string]metadataPartition
+	partitioned  bool
+	generation   string
+	readRevision string
+	store        *store
 }
 
 type metadataSnapshot struct {
 	Encryption []byte `json:",omitempty"`
 	Layout     []byte
 	Entries    map[string][]byte
-}
-
-type etcdRange struct {
-	More   bool `json:"more"`
-	Header struct {
-		ClusterID string `json:"cluster_id"`
-		Revision  string `json:"revision"`
-	} `json:"header"`
-	KVs []struct {
-		Key      string `json:"key"`
-		Value    []byte `json:"value"`
-		Revision string `json:"mod_revision"`
-	} `json:"kvs"`
 }
 
 func configureCluster(storage *store, cfg config, allowBootstrap bool) (*metadataCluster, error) {
@@ -96,7 +81,7 @@ func configureCluster(storage *store, cfg config, allowBootstrap bool) (*metadat
 	}
 	config.Endpoints = append([]string(nil), config.Endpoints...)
 	for i, endpoint := range config.Endpoints {
-		parsed, err := validateShardNode(shardNode{Endpoint: endpoint, Token: strings.Repeat("x", 24)})
+		parsed, err := erasure.ValidateNode(erasure.Node{Endpoint: endpoint, Token: strings.Repeat("x", 24)})
 		if err != nil {
 			return nil, fmt.Errorf("invalid etcd endpoint %d", i+1)
 		}
@@ -108,32 +93,25 @@ func configureCluster(storage *store, cfg config, allowBootstrap bool) (*metadat
 			return nil, err
 		}
 		for _, name := range names {
-			if name.Name() != ".lock" && name.Name() != encryptionBinding {
+			if name.Name() != ".lock" && name.Name() != encryption.BindingFile {
 				return nil, errors.New("start a cluster coordinator with an empty local data directory")
 			}
 		}
-		if err := writeMetadataFile(dir, clusterBinding, []byte(config.Name)); err != nil {
+		if err := fsutil.WriteFileAtomic(dir, clusterBinding, []byte(config.Name)); err != nil {
 			return nil, err
 		}
-	}
-	tlsConfig, err := clusterTLS(config)
-	if err != nil {
-		return nil, err
 	}
 	identity, err := os.ReadFile(filepath.Join(dir, clusterInitialized))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
+	client, err := etcd.New(config.Endpoints, config.Token, config.CAFile, config.ClientCert, config.ClientKey, string(identity))
+	if err != nil {
+		return nil, err
+	}
 	cluster := &metadataCluster{
-		config: config, etcdID: string(identity), key: base64.StdEncoding.EncodeToString([]byte("/stash/metadata/" + config.Name + "/v1")),
-		store: storage,
-		client: &http.Client{Transport: &http.Transport{
-			TLSClientConfig: tlsConfig,
-
-			DialContext:         (&net.Dialer{Timeout: time.Second}).DialContext,
-			TLSHandshakeTimeout: 2 * time.Second, ResponseHeaderTimeout: 3 * time.Second,
-			IdleConnTimeout: 60 * time.Second,
-		}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		config: config, key: base64.StdEncoding.EncodeToString([]byte("/stash/metadata/" + config.Name + "/v1")),
+		store: storage, etcd: client,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -150,7 +128,7 @@ func configureCluster(storage *store, cfg config, allowBootstrap bool) (*metadat
 		}
 		// Bind the local layout before offering it as the cluster's first revision.
 		// On a concurrent bootstrap, discard this candidate and use the winner.
-		if _, err := configureErasure(dir, cfg.Erasure); err != nil {
+		if _, err := erasure.Open(dir, cfg.Erasure); err != nil {
 			return nil, err
 		}
 		candidate, err := newClusterRoot(dir)
@@ -167,11 +145,11 @@ func configureCluster(storage *store, cfg config, allowBootstrap bool) (*metadat
 		}
 	}
 	if revision == "0" {
-		return nil, errMetadataQuorum
+		return nil, etcd.ErrQuorum
 	}
 	var expectedLayout []byte
 	if len(identity) != 0 {
-		expectedLayout, err = os.ReadFile(filepath.Join(dir, erasureLayout))
+		expectedLayout, err = os.ReadFile(filepath.Join(dir, erasure.LayoutFile))
 		if err != nil {
 			return nil, err
 		}
@@ -191,70 +169,18 @@ func configureCluster(storage *store, cfg config, allowBootstrap bool) (*metadat
 		}
 		cluster.partitioned = true
 	} else {
-		return nil, errMetadataQuorum
+		return nil, etcd.ErrQuorum
 	}
-	if err := writeMetadataFile(dir, clusterInitialized, []byte(cluster.etcdID)); err != nil {
+	if err := fsutil.WriteFileAtomic(dir, clusterInitialized, []byte(cluster.etcd.Identity())); err != nil {
 		return nil, err
 	}
 	cluster.revision = revision
 	return cluster, nil
 }
 
-func (cluster *metadataCluster) call(ctx context.Context, path string, value, result any) error {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	endpoints := cluster.config.Endpoints
-	if path == "/v3/kv/txn" {
-		endpoints = []string{cluster.lastReadEndpoint}
-	}
-	for _, endpoint := range endpoints {
-		if ctx.Err() != nil {
-			break
-		}
-		callCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
-		request, err := http.NewRequestWithContext(callCtx, http.MethodPost, endpoint+path, bytes.NewReader(data))
-		if err != nil {
-			cancel()
-			return err
-		}
-		request.Header.Set("Content-Type", "application/json")
-		if cluster.config.Token != "" {
-			request.Header.Set("Authorization", cluster.config.Token)
-		}
-		response, err := cluster.client.Do(request)
-		if err != nil {
-			cancel()
-			continue
-		}
-		if response.StatusCode != http.StatusOK {
-			response.Body.Close()
-			cancel()
-			continue
-		}
-		decoder := json.NewDecoder(io.LimitReader(response.Body, 2*maxClusterSnapshot))
-		err = decoder.Decode(result)
-		response.Body.Close()
-		cancel()
-		if err == nil {
-			if rangeResult, ok := result.(*etcdRange); ok {
-				id := rangeResult.Header.ClusterID
-				if id == "" || cluster.etcdID != "" && cluster.etcdID != id {
-					return errors.New("etcd endpoint returned a different cluster identity")
-				}
-				cluster.etcdID = id
-				cluster.lastReadEndpoint = endpoint
-			}
-			return nil
-		}
-	}
-	return errMetadataQuorum
-}
-
 func (cluster *metadataCluster) read(ctx context.Context) ([]byte, string, error) {
-	var result etcdRange
-	if err := cluster.call(ctx, "/v3/kv/range", map[string]string{"key": cluster.key}, &result); err != nil {
+	result, err := cluster.etcd.Range(ctx, map[string]string{"key": cluster.key})
+	if err != nil {
 		return nil, "", err
 	}
 	cluster.readRevision = result.Header.Revision
@@ -262,11 +188,11 @@ func (cluster *metadataCluster) read(ctx context.Context) ([]byte, string, error
 		return nil, "0", nil
 	}
 	if len(result.KVs) != 1 || len(result.KVs[0].Value) == 0 {
-		return nil, "", errMetadataQuorum
+		return nil, "", etcd.ErrQuorum
 	}
 	version := result.KVs[0]
 	if n, err := strconv.ParseInt(version.Revision, 10, 64); err != nil || n <= 0 {
-		return nil, "", errMetadataQuorum
+		return nil, "", etcd.ErrQuorum
 	}
 	return version.Value, version.Revision, nil
 }
@@ -276,26 +202,7 @@ func (cluster *metadataCluster) commit(ctx context.Context, revision string, dat
 		"compare": []any{map[string]string{"target": "MOD", "result": "EQUAL", "key": cluster.key, "mod_revision": revision}},
 		"success": []any{map[string]any{"request_put": map[string]any{"key": cluster.key, "value": data}}},
 	}
-	return cluster.runTransaction(ctx, transaction)
-}
-
-func (cluster *metadataCluster) runTransaction(ctx context.Context, transaction map[string]any) (string, error) {
-	var result struct {
-		Succeeded bool `json:"succeeded"`
-		Header    struct {
-			Revision string `json:"revision"`
-		} `json:"header"`
-	}
-	if err := cluster.call(ctx, "/v3/kv/txn", transaction, &result); err != nil {
-		return "", err
-	}
-	if !result.Succeeded {
-		return "", nil
-	}
-	if n, err := strconv.ParseInt(result.Header.Revision, 10, 64); err != nil || n <= 0 {
-		return "", errMetadataQuorum
-	}
-	return result.Header.Revision, nil
+	return cluster.etcd.Transaction(ctx, transaction)
 }
 
 func snapshotMetadata(dir string) ([]byte, error) {
@@ -303,7 +210,7 @@ func snapshotMetadata(dir string) ([]byte, error) {
 }
 
 func snapshotBucketMetadata(dir, bucket string) ([]byte, error) {
-	layout, err := os.ReadFile(filepath.Join(dir, erasureLayout))
+	layout, err := os.ReadFile(filepath.Join(dir, erasure.LayoutFile))
 	if err != nil {
 		return nil, err
 	}
@@ -457,7 +364,7 @@ func restoreMetadata(dir string, encoded, expectedLayout []byte) error {
 			return err
 		}
 	}
-	return writeMetadataFile(dir, erasureLayout, snapshot.Layout)
+	return fsutil.WriteFileAtomic(dir, erasure.LayoutFile, snapshot.Layout)
 }
 
 func materializeMetadata(tmp, bucket string, entries map[string][]byte) error {
@@ -531,28 +438,6 @@ func (cluster *metadataCluster) wrap(next http.Handler) http.Handler {
 	})
 }
 
-func clusterTLS(cfg clusterConfig) (*tls.Config, error) {
-	config := &tls.Config{MinVersion: tls.VersionTLS12}
-	if cfg.CAFile != "" {
-		data, err := os.ReadFile(cfg.CAFile)
-		if err != nil {
-			return nil, err
-		}
-		config.RootCAs = x509.NewCertPool()
-		if !config.RootCAs.AppendCertsFromPEM(data) {
-			return nil, errors.New("invalid etcd CA file")
-		}
-	}
-	if cfg.ClientCert != "" || cfg.ClientKey != "" {
-		pair, err := tls.LoadX509KeyPair(cfg.ClientCert, cfg.ClientKey)
-		if err != nil {
-			return nil, err
-		}
-		config.Certificates = []tls.Certificate{pair}
-	}
-	return config, nil
-}
-
 // refresh runs with the coordinator lock held.
 func (cluster *metadataCluster) refresh(ctx context.Context) ([]byte, string, error) {
 	snapshot, revision, err := cluster.read(ctx)
@@ -560,10 +445,10 @@ func (cluster *metadataCluster) refresh(ctx context.Context) ([]byte, string, er
 		return nil, "", err
 	}
 	if revision == "0" {
-		return nil, "", errMetadataQuorum
+		return nil, "", etcd.ErrQuorum
 	}
 	if isPartitionedRoot(snapshot) {
-		layout, err := os.ReadFile(filepath.Join(cluster.store.dir, erasureLayout))
+		layout, err := os.ReadFile(filepath.Join(cluster.store.dir, erasure.LayoutFile))
 		if err != nil {
 			return nil, "", err
 		}
@@ -576,10 +461,10 @@ func (cluster *metadataCluster) refresh(ctx context.Context) ([]byte, string, er
 		return snapshot, revision, nil
 	}
 	if cluster.partitioned {
-		return nil, "", errMetadataQuorum
+		return nil, "", etcd.ErrQuorum
 	}
 	if revision != cluster.revision {
-		layout, err := os.ReadFile(filepath.Join(cluster.store.dir, erasureLayout))
+		layout, err := os.ReadFile(filepath.Join(cluster.store.dir, erasure.LayoutFile))
 		if err != nil {
 			cluster.revision = ""
 			return nil, "", err
@@ -595,7 +480,7 @@ func (cluster *metadataCluster) refresh(ctx context.Context) ([]byte, string, er
 }
 
 func clusterEncryptionBinding(dir string) ([]byte, error) {
-	value, err := os.ReadFile(filepath.Join(dir, encryptionBinding))
+	value, err := os.ReadFile(filepath.Join(dir, encryption.BindingFile))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}

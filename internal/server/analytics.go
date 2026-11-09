@@ -15,6 +15,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"stash/internal/audit"
+	"stash/internal/fsutil"
 )
 
 const analyticsFile = ".analytics.json"
@@ -132,7 +135,7 @@ func (a *analytics) flush() error {
 	a.mu.Unlock()
 	data, err := json.Marshal(analyticsCheckpoint{Traffic: rows, Storage: samples})
 	if err == nil {
-		err = writeMetadataFile(a.dir, analyticsFile, data)
+		err = fsutil.WriteFileAtomic(a.dir, analyticsFile, data)
 	}
 	if err != nil {
 		a.mu.Lock()
@@ -223,7 +226,7 @@ func (w *trackedResponse) Write(p []byte) (int, error) {
 
 func (w *trackedResponse) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-func trackRequests(next http.Handler, a *analytics, audit *auditLog) http.Handler {
+func trackRequests(next http.Handler, a *analytics, auditLog *audit.Log) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || strings.HasPrefix(r.URL.Path, "/.stash/") {
 			next.ServeHTTP(w, r)
@@ -232,7 +235,7 @@ func trackRequests(next http.Handler, a *analytics, audit *auditLog) http.Handle
 		start := time.Now()
 		traffic := &requestTraffic{}
 		var requestID string
-		if audit != nil {
+		if auditLog != nil {
 			var id [16]byte
 			rand.Read(id[:])
 			requestID = hex.EncodeToString(id[:])
@@ -254,8 +257,8 @@ func trackRequests(next http.Handler, a *analytics, audit *auditLog) http.Handle
 			a.record(analyticsKey{Hour: start.UTC().Truncate(time.Hour).Unix(), Bucket: traffic.bucket, App: traffic.app,
 				Operation: operation}, status, elapsed, traffic.received, out.sent)
 		}
-		if audit != nil {
-			audit.record(auditEvent{Time: start.UTC(), RequestID: requestID, Credential: traffic.credential,
+		if auditLog != nil {
+			auditLog.Record(audit.Event{Time: start.UTC(), RequestID: requestID, Credential: traffic.credential,
 				Bucket: traffic.bucket, Operation: operation, Status: status, DurationMS: elapsed.Milliseconds()})
 		}
 

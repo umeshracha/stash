@@ -1,4 +1,4 @@
-package server
+package audit
 
 import (
 	"encoding/json"
@@ -9,13 +9,15 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"stash/internal/fsutil"
 )
 
 const auditFile = ".audit.jsonl"
 const auditMaxBytes = 10 << 20
 const auditArchives = 4
 
-type auditLog struct {
+type Log struct {
 	mu        sync.Mutex
 	dir       string
 	file      *os.File
@@ -23,7 +25,7 @@ type auditLog struct {
 	lastError time.Time
 }
 
-type auditEvent struct {
+type Event struct {
 	Time       time.Time `json:"time"`
 	RequestID  string    `json:"request_id"`
 	Credential string    `json:"credential,omitempty"`
@@ -33,15 +35,15 @@ type auditEvent struct {
 	DurationMS int64     `json:"duration_ms"`
 }
 
-func openAuditLog(dir string) (*auditLog, error) {
-	a := &auditLog{dir: dir}
+func Open(dir string) (*Log, error) {
+	a := &Log{dir: dir}
 	if err := a.open(); err != nil {
 		return nil, err
 	}
 	return a, nil
 }
 
-func (a *auditLog) open() error {
+func (a *Log) open() error {
 	file, err := os.OpenFile(filepath.Join(a.dir, auditFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
@@ -55,7 +57,7 @@ func (a *auditLog) open() error {
 	return nil
 }
 
-func (a *auditLog) close() {
+func (a *Log) Close() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.file != nil {
@@ -64,7 +66,7 @@ func (a *auditLog) close() {
 	}
 }
 
-func (a *auditLog) rotate() error {
+func (a *Log) rotate() error {
 	if err := a.file.Close(); err != nil {
 		a.file = nil
 		return err
@@ -83,10 +85,10 @@ func (a *auditLog) rotate() error {
 	if err := a.open(); err != nil {
 		return err
 	}
-	return syncDir(a.dir)
+	return fsutil.SyncDir(a.dir)
 }
 
-func (a *auditLog) record(event auditEvent) {
+func (a *Log) Record(event Event) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if err := a.append(event); err != nil && time.Since(a.lastError) >= time.Minute {
@@ -95,7 +97,7 @@ func (a *auditLog) record(event auditEvent) {
 	}
 }
 
-func (a *auditLog) append(event auditEvent) error {
+func (a *Log) append(event Event) error {
 	body, err := json.Marshal(event)
 	if err != nil {
 		return err
