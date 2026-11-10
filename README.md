@@ -1,6 +1,10 @@
 # Stash
 
-Stash is a Go object storage system targeting MinIO-style S3 compatibility, durability, and operations. The same binary can run as a standalone server, a cluster coordinator, or a dedicated shard node.
+Stash is a self-hosted MinIO alternative for applications that use S3 object storage. It ships as a single Go binary that can run as a standalone server, a cluster coordinator, or a dedicated shard node.
+
+Stash supports a [documented S3 subset](#s3-subset), including multipart uploads, presigned URLs, object versioning, and Object Lock. It also includes erasure coding, cross-site replication with manual failover, and a built-in [admin console](#admin-console-and-analytics). Stash is free to use, modify, and distribute under the [MIT License](LICENSE).
+
+[See the head-to-head MinIO performance results](#stash-vs-minio-performance).
 
 ## Run locally
 
@@ -280,6 +284,34 @@ The command commits the new active key and its fingerprint through etcd. Prepare
 Choose a checksum when initiating an upload. CRC32 and CRC32C support `FULL_OBJECT` and `COMPOSITE`, CRC64NVME supports `FULL_OBJECT`, and SHA1 and SHA256 support `COMPOSITE`. Stash computes and verifies checksums for uploaded and copied parts. A checksum supplied at completion must match the assembled object or its composite checksum. Composite uploads use consecutive part numbers starting at one.
 
 Completion and checksum-enabled reads return the resulting checksum and its type. A single server-side copy recomputes a whole-object checksum when the source has a checksum or the copy specifies an algorithm.
+
+## Stash vs MinIO performance
+
+Five alternating trials per server on an Apple M1 Pro (10 CPU cores, 32 GiB RAM), macOS 26.4.1, APFS, and loopback HTTP. Both servers used a fresh directory on the same filesystem, Go 1.26.5, and the same boto3 1.43.126 client with default checksum settings. The Stash build used commit `141c383`. MinIO Community was built from [RELEASE.2025-10-15T17-29-55Z](https://github.com/minio/minio/releases/tag/RELEASE.2025-10-15T17-29-55Z) at commit `9e49d5e7a648`.
+
+The client warmed up each server with eight 256 KiB objects. It then uploaded and downloaded 256 objects of 4 KiB with eight workers and 64 objects of 2 MiB with four workers. Downloads followed writes with a warm filesystem cache. The client compared every download byte for byte. Each cell reports the median of the five trial values.
+
+| Workload | Stash throughput | MinIO throughput | Stash p95 | MinIO p95 |
+| --- | ---: | ---: | ---: | ---: |
+| 4 KiB PUT | 157.0 req/s | 680.1 req/s | 70.33 ms | 17.13 ms |
+| 4 KiB GET | 1,046.0 req/s | 1,078.7 req/s | 12.34 ms | 12.85 ms |
+| 2 MiB PUT | 166.76 MiB/s | 554.95 MiB/s | 55.13 ms | 18.21 ms |
+| 2 MiB GET | 1,497.65 MiB/s | 1,386.51 MiB/s | 6.74 ms | 8.20 ms |
+| Peak server RSS | 21.67 MiB | 391.72 MiB | | |
+
+MinIO delivered 4.33× the small-object upload rate and 3.33× the large-object upload throughput. Stash delivered 8% higher warm 2 MiB GET throughput and used 94% less peak server memory in these trials. These results cover single-node, single-directory transfers. Networked clusters, cold reads, and sustained mixed traffic are separate workloads.
+
+[Raw results for all ten trials](docs/benchmarks/stash-vs-minio.json)
+
+To reproduce one trial per server, run these commands with Python 3 and boto3 installed. Repeat with alternating server order for the five-trial comparison.
+
+```sh
+go build -o stash ./cmd/stash
+minio_bin_dir=$(mktemp -d)
+GOBIN="$minio_bin_dir" go install github.com/minio/minio@RELEASE.2025-10-15T17-29-55Z
+python3 tools/bench.py ./stash --layout standalone
+python3 tools/bench.py "$minio_bin_dir/minio" --layout minio
+```
 
 ## Performance baseline
 

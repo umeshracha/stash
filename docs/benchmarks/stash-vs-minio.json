@@ -1,0 +1,712 @@
+[
+  {
+    "trial": 1,
+    "server": "stash",
+    "layout": "standalone",
+    "results": [
+      {
+        "workload": "small",
+        "method": "PUT",
+        "bytes_per_object": 4096,
+        "requests": 256,
+        "concurrency": 8,
+        "seconds": 1.49,
+        "requests_per_second": 171.8,
+        "mib_per_second": 0.67,
+        "latency_ms": {
+          "p50": 45.08,
+          "p95": 64.26,
+          "p99": 71.0
+        }
+      },
+      {
+        "workload": "small",
+        "method": "GET",
+        "bytes_per_object": 4096,
+        "requests": 256,
+        "concurrency": 8,
+        "seconds": 0.267,
+        "requests_per_second": 957.3,
+        "mib_per_second": 3.74,
+        "latency_ms": {
+          "p50": 7.19,
+          "p95": 15.5,
+          "p99": 19.11
+        }
+      },
+      {
+        "workload": "large",
+        "method": "PUT",
+        "bytes_per_object": 2097152,
+        "requests": 64,
+        "concurrency": 4,
+        "seconds": 0.754,
+        "requests_per_second": 84.9,
+        "mib_per_second": 169.73,
+        "latency_ms": {
+          "p50": 44.97,
+          "p95": 53.05,
+          "p99": 60.86
+        }
+      },
+      {
+        "workload": "large",
+        "method": "GET",
+        "bytes_per_object": 2097152,
+        "requests": 64,
+        "concurrency": 4,
+        "seconds": 0.086,
+        "requests_per_second": 745.4,
+        "mib_per_second": 1490.8,
+        "latency_ms": {
+          "p50": 5.15,
+          "p95": 6.74,
+          "p99": 6.99
+        }
+      }
+    ],
+    "server_processes": 1,
+    "server_user_cpu_seconds": 0.545,
+    "server_system_cpu_seconds": 0.733,
+    "server_peak_rss_mib": 21.62
+  },
+  {
+    "trial": 1,
+    "server": "minio",
+    "layout": "minio",
+    "results": [
+      {
+        "workload": "small",
+        "method": "PUT",
+        "bytes_per_object": 4096,
+        "requests": 256,
+        "concurrency": 8,
+        "seconds": 0.368,
+        "requests_per_second": 695.8,
+        "mib_per_second": 2.72,
+        "latency_ms": {
+          "p50": 10.97,
+          "p95": 16.51,
+          "p99": 19.03
+        }
+      },
+      {
+        "workload": "small",
+        "method": "GET",
+        "bytes_per_object": 4096,
+        "requests": 256,
+        "concurrency": 8,
+        "seconds": 0.234,
+        "requests_per_second": 1095.9,
+        "mib_per_second": 4.28,
+        "latency_ms": {
+          "p50": 6.75,
+          "p95": 12.76,
+          "p99": 16.58
+        }
+      },
+      {
+        "workload": "large",
+        "method": "PUT",
+        "bytes_per_object": 2097152,
+        "requests": 64,
+        "concurrency": 4,
+        "seconds": 0.226,
+        "requests_per_second": 282.7,
+        "mib_per_second": 565.33,
+        "latency_ms": {
+          "p50": 13.38,
+          "p95": 16.86,
+          "p99": 18.49
+        }
+      },
+      {
+        "workload": "large",
+        "method": "GET",
+        "bytes_per_object": 2097152,
+        "requests": 64,
+        "concurrency": 4,
+        "seconds": 0.088,
+        "requests_per_second": 727.2,
+        "mib_per_second": 1454.34,
+        "latency_ms": {
+          "p50": 5.36,
+          "p95": 7.22,
+          "p99": 8.81
+        }
+      }
+    ],
+    "server_processes": 1,
+    "server_user_cpu_seconds": 1.137,
+    "server_system_cpu_seconds": 0.711,
+    "server_peak_rss_mib": 397.66
+  },
+  {
+    "trial": 2,
+    "server": "minio",
+    "layout": "minio",
+    "results": [
+      {
+        "workload": "small",
+        "method": "PUT",
+        "bytes_per_object": 4096,
+        "requests": 256,
+        "concurrency": 8,
+        "seconds": 0.376,
+        "requests_per_second": 680.1,
+        "mib_per_second": 2.66,
+        "latency_ms": {
+          "p50": 11.48,
+          "p95": 17.13,
+          "p99": 21.24
+        }
+      },
+      {
+        "workload": "small",
+        "method": "GET",
+        "bytes_per_object": 4096,
+        "requests": 256,
+        "concurrency": 8,
+        "seconds": 0.237,
+        "requests_per_second": 1078.7,
+        "mib_per_second": 4.21,
+        "latency_ms": {
+          "p50": 6.72,
+          "p95": 12.85,
+          "p99": 15.81
+        }
+      },
+      {
+        "workload": "large",
+        "method": "PUT",
+        "bytes_per_object": 2097152,
+        "requests": 64,
+        "concurrency": 4,
+        "seconds": 0.232,
+        "requests_per_second": 276.2,
+        "mib_per_second": 552.31,
+        "latency_ms": {
+          "p50": 13.77,
+          "p95": 18.21,
+          "p99": 26.32
+        }
+      },
+      {
+        "workload": "large",
+        "method": "GET",
+        "bytes_per_object": 2097152,
+        "requests": 64,
+        "concurrency": 4,
+        "seconds": 0.091,
+        "requests_per_second": 703.8,
+        "mib_per_second": 1407.57,
+        "latency_ms": {
+          "p50": 5.44,
+          "p95": 7.7,
+          "p99": 9.91
+        }
+      }
+    ],
+    "server_processes": 1,
+    "server_user_cpu_seconds": 1.134,
+    "server_system_cpu_seconds": 0.693,
+    "server_peak_rss_mib": 391.72
+  },
+  {
+    "trial": 2,
+    "server": "stash",
+    "layout": "standalone",
+    "results": [
+      {
+        "workload": "small",
+        "method": "PUT",
+        "bytes_per_object": 4096,
+        "requests": 256,
+        "concurrency": 8,
+        "seconds": 1.794,
+        "requests_per_second": 142.7,
+        "mib_per_second": 0.56,
+        "latency_ms": {
+          "p50": 55.41,
+          "p95": 73.55,
+          "p99": 78.47
+        }
+      },
+      {
+        "workload": "small",
+        "method": "GET",
+        "bytes_per_object": 4096,
+        "requests": 256,
+        "concurrency": 8,
+        "seconds": 0.236,
+        "requests_per_second": 1083.2,
+        "mib_per_second": 4.23,
+        "latency_ms": {
+          "p50": 6.58,
+          "p95": 12.34,
+          "p99": 15.54
+        }
+      },
+      {
+        "workload": "large",
+        "method": "PUT",
+        "bytes_per_object": 2097152,
+        "requests": 64,
+        "concurrency": 4,
+        "seconds": 0.762,
+        "requests_per_second": 84.0,
+        "mib_per_second": 168.05,
+        "latency_ms": {
+          "p50": 44.7,
+          "p95": 59.58,
+          "p99": 69.13
+        }
+      },
+      {
+        "workload": "large",
+        "method": "GET",
+        "bytes_per_object": 2097152,
+        "requests": 64,
+        "concurrency": 4,
+        "seconds": 0.082,
+        "requests_per_second": 780.6,
+        "mib_per_second": 1561.29,
+        "latency_ms": {
+          "p50": 4.92,
+          "p95": 6.33,
+          "p99": 7.03
+        }
+      }
+    ],
+    "server_processes": 1,
+    "server_user_cpu_seconds": 0.526,
+    "server_system_cpu_seconds": 0.661,
+    "server_peak_rss_mib": 21.67
+  },
+  {
+    "trial": 3,
+    "server": "stash",
+    "layout": "standalone",
+    "results": [
+      {
+        "workload": "small",
+        "method": "PUT",
+        "bytes_per_object": 4096,
+        "requests": 256,
+        "concurrency": 8,
+        "seconds": 1.63,
+        "requests_per_second": 157.0,
+        "mib_per_second": 0.61,
+        "latency_ms": {
+          "p50": 50.35,
+          "p95": 70.33,
+          "p99": 79.21
+        }
+      },
+      {
+        "workload": "small",
+        "method": "GET",
+        "bytes_per_object": 4096,
+        "requests": 256,
+        "concurrency": 8,
+        "seconds": 0.217,
+        "requests_per_second": 1182.2,
+        "mib_per_second": 4.62,
+        "latency_ms": {
+          "p50": 6.13,
+          "p95": 12.14,
+          "p99": 15.34
+        }
+      },
+      {
+        "workload": "large",
+        "method": "PUT",
+        "bytes_per_object": 2097152,
+        "requests": 64,
+        "concurrency": 4,
+        "seconds": 0.776,
+        "requests_per_second": 82.5,
+        "mib_per_second": 165.03,
+        "latency_ms": {
+          "p50": 46.19,
+          "p95": 55.13,
+          "p99": 59.03
+        }
+      },
+      {
+        "workload": "large",
+        "method": "GET",
+        "bytes_per_object": 2097152,
+        "requests": 64,
+        "concurrency": 4,
+        "seconds": 0.084,
+        "requests_per_second": 760.2,
+        "mib_per_second": 1520.38,
+        "latency_ms": {
+          "p50": 4.88,
+          "p95": 7.22,
+          "p99": 7.83
+        }
+      }
+    ],
+    "server_processes": 1,
+    "server_user_cpu_seconds": 0.553,
+    "server_system_cpu_seconds": 0.622,
+    "server_peak_rss_mib": 21.84
+  },
+  {
+    "trial": 3,
+    "server": "minio",
+    "layout": "minio",
+    "results": [
+      {
+        "workload": "small",
+        "method": "PUT",
+        "bytes_per_object": 4096,
+        "requests": 256,
+        "concurrency": 8,
+        "seconds": 0.368,
+        "requests_per_second": 694.7,
+        "mib_per_second": 2.71,
+        "latency_ms": {
+          "p50": 10.99,
+          "p95": 16.83,
+          "p99": 22.86
+        }
+      },
+      {
+        "workload": "small",
+        "method": "GET",
+        "bytes_per_object": 4096,
+        "requests": 256,
+        "concurrency": 8,
+        "seconds": 0.227,
+        "requests_per_second": 1127.7,
+        "mib_per_second": 4.4,
+        "latency_ms": {
+          "p50": 6.48,
+          "p95": 12.79,
+          "p99": 15.85
+        }
+      },
+      {
+        "workload": "large",
+        "method": "PUT",
+        "bytes_per_object": 2097152,
+        "requests": 64,
+        "concurrency": 4,
+        "seconds": 0.227,
+        "requests_per_second": 281.7,
+        "mib_per_second": 563.33,
+        "latency_ms": {
+          "p50": 13.12,
+          "p95": 20.28,
+          "p99": 25.45
+        }
+      },
+      {
+        "workload": "large",
+        "method": "GET",
+        "bytes_per_object": 2097152,
+        "requests": 64,
+        "concurrency": 4,
+        "seconds": 0.092,
+        "requests_per_second": 693.3,
+        "mib_per_second": 1386.51,
+        "latency_ms": {
+          "p50": 5.56,
+          "p95": 8.25,
+          "p99": 10.74
+        }
+      }
+    ],
+    "server_processes": 1,
+    "server_user_cpu_seconds": 1.135,
+    "server_system_cpu_seconds": 0.681,
+    "server_peak_rss_mib": 375.22
+  },
+  {
+    "trial": 4,
+    "server": "minio",
+    "layout": "minio",
+    "results": [
+      {
+        "workload": "small",
+        "method": "PUT",
+        "bytes_per_object": 4096,
+        "requests": 256,
+        "concurrency": 8,
+        "seconds": 0.419,
+        "requests_per_second": 610.6,
+        "mib_per_second": 2.39,
+        "latency_ms": {
+          "p50": 12.02,
+          "p95": 20.08,
+          "p99": 24.98
+        }
+      },
+      {
+        "workload": "small",
+        "method": "GET",
+        "bytes_per_object": 4096,
+        "requests": 256,
+        "concurrency": 8,
+        "seconds": 0.246,
+        "requests_per_second": 1039.3,
+        "mib_per_second": 4.06,
+        "latency_ms": {
+          "p50": 6.98,
+          "p95": 12.85,
+          "p99": 16.26
+        }
+      },
+      {
+        "workload": "large",
+        "method": "PUT",
+        "bytes_per_object": 2097152,
+        "requests": 64,
+        "concurrency": 4,
+        "seconds": 0.231,
+        "requests_per_second": 277.5,
+        "mib_per_second": 554.95,
+        "latency_ms": {
+          "p50": 13.55,
+          "p95": 18.1,
+          "p99": 19.32
+        }
+      },
+      {
+        "workload": "large",
+        "method": "GET",
+        "bytes_per_object": 2097152,
+        "requests": 64,
+        "concurrency": 4,
+        "seconds": 0.096,
+        "requests_per_second": 667.5,
+        "mib_per_second": 1335.03,
+        "latency_ms": {
+          "p50": 5.81,
+          "p95": 8.2,
+          "p99": 9.6
+        }
+      }
+    ],
+    "server_processes": 1,
+    "server_user_cpu_seconds": 1.165,
+    "server_system_cpu_seconds": 0.725,
+    "server_peak_rss_mib": 391.84
+  },
+  {
+    "trial": 4,
+    "server": "stash",
+    "layout": "standalone",
+    "results": [
+      {
+        "workload": "small",
+        "method": "PUT",
+        "bytes_per_object": 4096,
+        "requests": 256,
+        "concurrency": 8,
+        "seconds": 1.723,
+        "requests_per_second": 148.6,
+        "mib_per_second": 0.58,
+        "latency_ms": {
+          "p50": 52.15,
+          "p95": 74.72,
+          "p99": 95.14
+        }
+      },
+      {
+        "workload": "small",
+        "method": "GET",
+        "bytes_per_object": 4096,
+        "requests": 256,
+        "concurrency": 8,
+        "seconds": 0.245,
+        "requests_per_second": 1046.0,
+        "mib_per_second": 4.09,
+        "latency_ms": {
+          "p50": 6.65,
+          "p95": 14.34,
+          "p99": 17.55
+        }
+      },
+      {
+        "workload": "large",
+        "method": "PUT",
+        "bytes_per_object": 2097152,
+        "requests": 64,
+        "concurrency": 4,
+        "seconds": 0.814,
+        "requests_per_second": 78.7,
+        "mib_per_second": 157.3,
+        "latency_ms": {
+          "p50": 48.05,
+          "p95": 62.44,
+          "p99": 64.45
+        }
+      },
+      {
+        "workload": "large",
+        "method": "GET",
+        "bytes_per_object": 2097152,
+        "requests": 64,
+        "concurrency": 4,
+        "seconds": 0.096,
+        "requests_per_second": 667.5,
+        "mib_per_second": 1335.02,
+        "latency_ms": {
+          "p50": 5.72,
+          "p95": 8.69,
+          "p99": 10.52
+        }
+      }
+    ],
+    "server_processes": 1,
+    "server_user_cpu_seconds": 0.514,
+    "server_system_cpu_seconds": 0.697,
+    "server_peak_rss_mib": 21.53
+  },
+  {
+    "trial": 5,
+    "server": "stash",
+    "layout": "standalone",
+    "results": [
+      {
+        "workload": "small",
+        "method": "PUT",
+        "bytes_per_object": 4096,
+        "requests": 256,
+        "concurrency": 8,
+        "seconds": 1.605,
+        "requests_per_second": 159.5,
+        "mib_per_second": 0.62,
+        "latency_ms": {
+          "p50": 49.08,
+          "p95": 65.69,
+          "p99": 78.19
+        }
+      },
+      {
+        "workload": "small",
+        "method": "GET",
+        "bytes_per_object": 4096,
+        "requests": 256,
+        "concurrency": 8,
+        "seconds": 0.264,
+        "requests_per_second": 968.0,
+        "mib_per_second": 3.78,
+        "latency_ms": {
+          "p50": 7.73,
+          "p95": 12.24,
+          "p99": 18.13
+        }
+      },
+      {
+        "workload": "large",
+        "method": "PUT",
+        "bytes_per_object": 2097152,
+        "requests": 64,
+        "concurrency": 4,
+        "seconds": 0.768,
+        "requests_per_second": 83.4,
+        "mib_per_second": 166.76,
+        "latency_ms": {
+          "p50": 46.49,
+          "p95": 54.81,
+          "p99": 56.39
+        }
+      },
+      {
+        "workload": "large",
+        "method": "GET",
+        "bytes_per_object": 2097152,
+        "requests": 64,
+        "concurrency": 4,
+        "seconds": 0.085,
+        "requests_per_second": 748.8,
+        "mib_per_second": 1497.65,
+        "latency_ms": {
+          "p50": 5.04,
+          "p95": 6.47,
+          "p99": 7.54
+        }
+      }
+    ],
+    "server_processes": 1,
+    "server_user_cpu_seconds": 0.538,
+    "server_system_cpu_seconds": 0.676,
+    "server_peak_rss_mib": 22.23
+  },
+  {
+    "trial": 5,
+    "server": "minio",
+    "layout": "minio",
+    "results": [
+      {
+        "workload": "small",
+        "method": "PUT",
+        "bytes_per_object": 4096,
+        "requests": 256,
+        "concurrency": 8,
+        "seconds": 0.417,
+        "requests_per_second": 613.2,
+        "mib_per_second": 2.4,
+        "latency_ms": {
+          "p50": 12.6,
+          "p95": 18.98,
+          "p99": 21.05
+        }
+      },
+      {
+        "workload": "small",
+        "method": "GET",
+        "bytes_per_object": 4096,
+        "requests": 256,
+        "concurrency": 8,
+        "seconds": 0.276,
+        "requests_per_second": 929.1,
+        "mib_per_second": 3.63,
+        "latency_ms": {
+          "p50": 7.89,
+          "p95": 14.82,
+          "p99": 18.66
+        }
+      },
+      {
+        "workload": "large",
+        "method": "PUT",
+        "bytes_per_object": 2097152,
+        "requests": 64,
+        "concurrency": 4,
+        "seconds": 0.249,
+        "requests_per_second": 256.8,
+        "mib_per_second": 513.59,
+        "latency_ms": {
+          "p50": 14.93,
+          "p95": 18.66,
+          "p99": 20.66
+        }
+      },
+      {
+        "workload": "large",
+        "method": "GET",
+        "bytes_per_object": 2097152,
+        "requests": 64,
+        "concurrency": 4,
+        "seconds": 0.106,
+        "requests_per_second": 603.9,
+        "mib_per_second": 1207.75,
+        "latency_ms": {
+          "p50": 5.88,
+          "p95": 11.79,
+          "p99": 13.25
+        }
+      }
+    ],
+    "server_processes": 1,
+    "server_user_cpu_seconds": 1.19,
+    "server_system_cpu_seconds": 0.803,
+    "server_peak_rss_mib": 377.92
+  }
+]

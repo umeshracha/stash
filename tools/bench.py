@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure authenticated object transfers against a local Stash deployment."""
+"""Measure authenticated object transfers against a local Stash or MinIO deployment."""
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -61,9 +61,9 @@ def workload(client, name, size, count, workers):
 
 
 @contextmanager
-def running(command, log_path):
+def running(command, log_path, *, env=None):
     with log_path.open("w+") as log:
-        process = subprocess.Popen(command, stdout=log, stderr=log)
+        process = subprocess.Popen(command, stdout=log, stderr=log, env=env)
         try:
             yield process
         except Exception:
@@ -139,7 +139,7 @@ def start_cluster(stack, binary, etcd, directory, port):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
-    parser.add_argument("--layout", choices=("standalone", "erasure", "cluster"), required=True)
+    parser.add_argument("--layout", choices=("standalone", "erasure", "cluster", "minio"), required=True)
     parser.add_argument("--etcd", type=Path, help="etcd binary for the cluster benchmark")
     parser.add_argument("--port", type=int, default=19745)
     parser.add_argument("--work-dir", type=Path, help="parent directory for benchmark data")
@@ -164,8 +164,21 @@ def main():
             config["erasure"] = {"drives": list(map(str, drives)), "parity": 2}
         if args.layout == "cluster":
             config.update(start_cluster(stack, binary, args.etcd.resolve(strict=True), directory, args.port))
-        server = start_stash(stack, binary, directory, "stash", config)
-        wait_ready(server, endpoint + "/readyz")
+        if args.layout == "minio":
+            data = directory / "data"
+            data.mkdir()
+            env = {key: value for key, value in os.environ.items() if not key.startswith("MINIO_")}
+            env.update(MINIO_ROOT_USER="benchmark", MINIO_ROOT_PASSWORD=secret, MINIO_UPDATE="off")
+            command = [
+                str(binary), "server", str(data), "--address", address,
+                "--console-address", f"127.0.0.1:{args.port + 1}",
+                "--certs-dir", str(directory / "certs"),
+            ]
+            server = stack.enter_context(running(command, directory / "minio.log", env=env))
+            wait_ready(server, endpoint + "/minio/health/ready")
+        else:
+            server = start_stash(stack, binary, directory, "stash", config)
+            wait_ready(server, endpoint + "/readyz")
         client = boto3.client(
             "s3",
             endpoint_url=endpoint,
