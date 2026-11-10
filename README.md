@@ -315,6 +315,18 @@ python3 tools/bench.py ./stash --layout standalone
 python3 tools/bench.py "$minio_bin_dir/minio" --layout minio
 ```
 
+### Small PUT optimization on macOS
+
+A follow-up on the same APFS host used three trials per build, rotating the order of the original Stash build, the optimized build, and MinIO. Each trial used eight workers to upload 256 objects of 4 KiB. The table reports the median across trials.
+
+| Build | Throughput | p95 |
+| --- | ---: | ---: |
+| Stash before batching | 150.9 req/s | 74.02 ms |
+| Stash with batching | 274.0 req/s | 38.09 ms |
+| MinIO Community | 650.0 req/s | 18.52 ms |
+
+Stash batches overlapping commits for objects up to 64 KiB staged in the destination directory on local APFS. It syncs each file and flushes the drive cache before renaming the files, then syncs the directory before returning success. Other paths use the individual file and directory sync sequence. The benchmark measures process-level upload behavior on one host. [Apple's explanation of drive cache flushing](https://developer.apple.com/videos/play/wwdc2019/419/)
+
 ## Performance baseline
 
 The benchmark starts a fresh Stash deployment, warms it up with eight 256 KiB objects, then measures concurrent S3 PUTs followed by GETs of the same objects. The client verifies every download byte for byte. The small workload uses 256 objects of 4 KiB with eight workers. The large workload uses 64 objects of 2 MiB with four workers. Each table cell is the median of that metric over three fresh runs.

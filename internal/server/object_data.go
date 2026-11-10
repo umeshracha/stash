@@ -53,7 +53,7 @@ func (s *store) commitData(file *os.File, dir, name string, obj *object) error {
 			return err
 		}
 	}
-	return commitObject(file, dir, name, *obj)
+	return s.commitObject(file, dir, name, *obj)
 }
 
 func (s *store) healAll(cleanup bool) error {

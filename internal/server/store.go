@@ -30,16 +30,17 @@ const maxObject = 5 * 1024 * 1024 * 1024
 const maxMetadata = 64 << 10
 
 type store struct {
-	encryption     *encryption.Keys
-	erasure        *erasure.Store
-	dir            string
-	lock           *os.File
-	mu             sync.RWMutex
-	versionMu      sync.RWMutex
-	versionHeadsMu sync.Mutex
-	versionHeads   map[string]string
-	replicaFeeds   map[string]*replicaFeed
-	uploadLocks    [64]sync.RWMutex
+	encryption         *encryption.Keys
+	erasure            *erasure.Store
+	dir                string
+	lock               *os.File
+	mu                 sync.RWMutex
+	versionMu          sync.RWMutex
+	versionHeadsMu     sync.Mutex
+	versionHeads       map[string]string
+	replicaFeeds       map[string]*replicaFeed
+	uploadLocks        [64]sync.RWMutex
+	directoryPublisher fsutil.DirectoryPublisher
 }
 
 type object struct {
@@ -178,7 +179,7 @@ func uploadHeaders(headers http.Header) http.Header {
 	return result
 }
 
-func commitObject(file *os.File, dir, name string, metadata object) error {
+func (s *store) commitObject(file *os.File, dir, name string, metadata object) error {
 	body, err := json.Marshal(metadata)
 	if err != nil || len(body) > maxMetadata {
 		return upload.ErrTooLarge
@@ -187,16 +188,8 @@ func commitObject(file *os.File, dir, name string, metadata object) error {
 	if _, err := file.Write(append(body, footer...)); err != nil {
 		return err
 	}
-	if err := file.Sync(); err != nil {
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(file.Name(), filepath.Join(dir, name)); err != nil {
-		return err
-	}
-	return fsutil.SyncDir(dir)
+	const smallObjectSize = 64 << 10
+	return s.directoryPublisher.Publish(file, filepath.Join(dir, name), metadata.Size <= smallObjectSize)
 }
 
 func readMetadata(file *os.File) (object, error) {

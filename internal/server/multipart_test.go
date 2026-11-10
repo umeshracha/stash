@@ -45,7 +45,7 @@ func TestRecoverUploadsAfterCommit(t *testing.T) {
 		store.close()
 		t.Fatal(err)
 	}
-	if err := commitObject(file, bucket, digest(key), object{Key: key, UploadID: completedID}); err != nil {
+	if err := store.commitObject(file, bucket, digest(key), object{Key: key, UploadID: completedID}); err != nil {
 		file.Close()
 		store.close()
 		t.Fatal(err)
