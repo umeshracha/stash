@@ -1,5 +1,7 @@
 # Stash
 
+![Stash — self-hosted S3 object storage](docs/assets/stash-banner.png)
+
 Stash is a self-hosted MinIO alternative for applications that use S3 object storage. It ships as a single Go binary that can run as a standalone server, a cluster coordinator, or a dedicated shard node.
 
 Stash supports a [documented S3 subset](#s3-subset), including multipart uploads, presigned URLs, object versioning, and Object Lock. It also includes erasure coding, cross-site replication with manual failover, and a built-in [admin console](#admin-console-and-analytics). Stash is free to use, modify, and distribute under the [MIT License](LICENSE).
