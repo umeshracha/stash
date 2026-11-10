@@ -435,4 +435,4 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o stash-linux-arm64 ./cmd/stash
 
 ## License
 
-[MIT License](LICENSE) · Copyright © 2026 Umesh
+[MIT License](LICENSE) · Copyright © 2026 [Umesh](https://umeshracha.com)
