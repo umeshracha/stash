@@ -8,7 +8,7 @@ Stash supports a [documented S3 subset](#s3-subset), including multipart uploads
 
 [See the head-to-head MinIO performance results](#stash-vs-minio-performance).
 
-[Quick start](#run-locally) · [S3 compatibility](#s3-subset) · [Admin console](#admin-console-and-analytics) · [MinIO benchmarks](#stash-vs-minio-performance) · [Current limitations](#current-limitations)
+[Download v0.1.0](https://github.com/umeshracha/stash/releases/tag/v0.1.0) · [Umesh’s website](https://umeshracha.com) · [Quick start](#run-locally) · [S3 compatibility](#s3-subset) · [Admin console](#admin-console-and-analytics) · [MinIO benchmarks](#stash-vs-minio-performance) · [Current limitations](#current-limitations)
 
 ## Explore the features
 
@@ -51,7 +51,7 @@ The [admin console](#admin-console-and-analytics) shows storage usage, replica s
 | S3 compatibility | The [supported S3 API subset](#s3-subset) uses path-style addressing. Check the [tested client workflows](#verified-client-workflows) for operations your application needs. |
 | Site recovery | [Cross-site replication](#replication-and-failover) is asynchronous. Promotion requires an operator, and writes newer than the last replicated checkpoint can be lost during failover. |
 | Admin and scale | The [web console](#admin-console-and-analytics) is read-only. Standalone bucket listings scan object metadata, which makes that layout best suited to smaller inventories. |
-| Installation | The project documents a source build. Prebuilt GitHub release downloads and a GitHub Actions build pipeline are still missing. |
+| Installation | Prebuilt Linux and macOS archives are available. Release builds are currently packaged manually. |
 
 ## Run locally
 
