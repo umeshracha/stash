@@ -8,6 +8,42 @@ Stash supports a [documented S3 subset](#s3-subset), including multipart uploads
 
 [See the head-to-head MinIO performance results](#stash-vs-minio-performance).
 
+[Quick start](#run-locally) · [S3 compatibility](#s3-subset) · [Admin console](#admin-console-and-analytics) · [MinIO benchmarks](#stash-vs-minio-performance)
+
+## Explore the features
+
+<details open>
+<summary><strong>Follow an object through Stash</strong></summary>
+
+![Animated diagram of a signed S3 upload, object versioning, and retrieval](docs/assets/stash-walkthrough.gif)
+
+A signed S3 request uploads an object to a bucket. If you enable versioning, later writes preserve earlier versions. Authorized clients can retrieve an object through S3 or download it from the admin console.
+
+</details>
+
+<details>
+<summary><strong>Upload, share, and protect objects</strong></summary>
+
+- Use [multipart uploads](#multipart-checksums) to send large objects in parts. See the [verified client workflows](#verified-client-workflows) for tested operations.
+- Create [presigned URLs](#presigned-urls-and-copy) to grant temporary access without handing out application credentials.
+- Use [Object Lock](#object-lock) for retention and [encryption at rest](#encryption-at-rest) to protect stored data.
+
+</details>
+
+<details>
+<summary><strong>Recover from storage or site failures</strong></summary>
+
+[Erasure coding](#erasure-coding-and-healing) distributes data across shards and supports repair. [Cross-site replication](#replication-and-failover) copies versions and delete markers to another Stash instance. Failover is manual.
+
+</details>
+
+<details>
+<summary><strong>See usage and investigate traffic</strong></summary>
+
+The [admin console](#admin-console-and-analytics) shows storage usage, replica status, request counts, errors, and estimated p95 latency. Filter traffic by bucket, application, operation, or time range and export it as CSV.
+
+</details>
+
 ## Run locally
 
 Requires Go 1.25 or later. Build on macOS or Linux.
@@ -387,3 +423,7 @@ Stop the server before backing up or restoring. Back up the entire data director
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o stash-linux-amd64 ./cmd/stash
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o stash-linux-arm64 ./cmd/stash
 ```
+
+## License
+
+[MIT License](LICENSE) · Copyright © 2026 Umesh
