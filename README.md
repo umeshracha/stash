@@ -1,14 +1,14 @@
-# Stash
+# Stash — Self-hosted S3 Object Storage
 
 ![Stash — self-hosted S3 object storage](docs/assets/stash-banner.png)
 
-Stash is a self-hosted MinIO alternative for applications that use S3 object storage. It ships as a single Go binary that can run as a standalone server, a cluster coordinator, or a dedicated shard node.
+Stash is an open-source, self-hosted S3 object storage server and MinIO alternative for VPS, NAS, and small private deployments. It ships as a single Go binary that can run as a standalone server, a cluster coordinator, or a dedicated shard node.
 
 Stash supports a [documented S3 subset](#s3-subset), including multipart uploads, presigned URLs, object versioning, and Object Lock. It also includes erasure coding, cross-site replication with manual failover, and a built-in [admin console](#admin-console-and-analytics). Stash is free to use, modify, and distribute under the [MIT License](LICENSE).
 
 [See the head-to-head MinIO performance results](#stash-vs-minio-performance).
 
-[Quick start](#run-locally) · [S3 compatibility](#s3-subset) · [Admin console](#admin-console-and-analytics) · [MinIO benchmarks](#stash-vs-minio-performance)
+[Quick start](#run-locally) · [S3 compatibility](#s3-subset) · [Admin console](#admin-console-and-analytics) · [MinIO benchmarks](#stash-vs-minio-performance) · [Current limitations](#current-limitations)
 
 ## Explore the features
 
@@ -43,6 +43,15 @@ A signed S3 request uploads an object to a bucket. If you enable versioning, lat
 The [admin console](#admin-console-and-analytics) shows storage usage, replica status, request counts, errors, and estimated p95 latency. Filter traffic by bucket, application, operation, or time range and export it as CSV.
 
 </details>
+
+## Current limitations
+
+| Area | What to expect |
+| --- | --- |
+| S3 compatibility | The [supported S3 API subset](#s3-subset) uses path-style addressing. Check the [tested client workflows](#verified-client-workflows) for operations your application needs. |
+| Site recovery | [Cross-site replication](#replication-and-failover) is asynchronous. Promotion requires an operator, and writes newer than the last replicated checkpoint can be lost during failover. |
+| Admin and scale | The [web console](#admin-console-and-analytics) is read-only. Standalone bucket listings scan object metadata, which makes that layout best suited to smaller inventories. |
+| Installation | The project documents a source build. Prebuilt GitHub release downloads and a GitHub Actions build pipeline are still missing. |
 
 ## Run locally
 
@@ -401,7 +410,7 @@ python3 tools/bench.py ./stash --layout erasure
 python3 tools/bench.py ./stash --layout cluster --etcd "$(command -v etcd)"
 ```
 
-## Roadmap
+## Implemented and verified capabilities
 
 1. **S3 data plane.** Multipart copy, full-object and composite checksums, and streaming checksum trailers are implemented. The compatibility matrix records the tested transfers for AWS CLI, boto3, Go AWS SDK, and MinIO Client.
 2. **Versioned storage.** Bucket versioning, version IDs, and delete markers are implemented. Current-version lookups and version publication reuse a bounded version-head cache. A process-kill test verified recovery of the previous version after an interrupted overwrite.
