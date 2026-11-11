@@ -39,11 +39,15 @@ func respond(w http.ResponseWriter, status int, value any) {
 }
 
 func failure(w http.ResponseWriter, status int, code string) {
+	failureMessage(w, status, code, code)
+}
+
+func failureMessage(w http.ResponseWriter, status int, code, message string) {
 	respond(w, status, struct {
 		XMLName xml.Name `xml:"Error"`
 		Code    string
 		Message string
-	}{Code: code, Message: code})
+	}{Code: code, Message: message})
 }
 
 func (c credential) permission(bucket string) string {
@@ -83,9 +87,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 		return
 	}
-	c, ok := s.authorize(r)
-	if !ok {
-		failure(w, 403, "AccessDenied")
+	c, err := s.authorize(r)
+	if err != nil {
+		s.denyAuth(w, err)
 		return
 	}
 	if traffic, ok := r.Context().Value(analyticsRequestContext{}).(*requestTraffic); ok {

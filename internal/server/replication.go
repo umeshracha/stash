@@ -181,8 +181,8 @@ func (s *server) serveReplication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if action == "status" {
-		c, ok := s.authorize(r)
-		if !ok || !c.allows("stash:GetReplicationStatus", bucket, "", nil) {
+		c, err := s.authorize(r)
+		if err != nil || !c.allows("stash:GetReplicationStatus", bucket, "", nil) {
 			http.Error(w, "access denied", 403)
 			return
 		}

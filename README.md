@@ -108,6 +108,16 @@ aws --endpoint-url http://127.0.0.1:9000 s3api list-objects-v2 --bucket reports
 aws --endpoint-url http://127.0.0.1:9000 s3api get-object --bucket reports --key example.txt downloaded.txt
 ```
 
+When a request is refused, the S3 error says why:
+
+| Error | Meaning |
+| --- | --- |
+| `InvalidAccessKeyId` | The access key ID is not in the configuration. |
+| `SignatureDoesNotMatch` | The secret, the signed headers, or the path and query differ from what the server computed. Behind a proxy, check that it preserves the `Host` header. |
+| `RequestTimeTooSkewed` | The client clock is more than 15 minutes from the server's. |
+| `AuthorizationHeaderMalformed` | The request is not valid SigV4, or it was signed for another region. The message names the expected region. |
+| `AccessDenied` | The request was anonymous, a presigned URL expired, a header was not signed, or the credential has no grant for the operation. |
+
 ## S3 subset
 
 - Bucket APIs include CreateBucket, ListBuckets, HeadBucket, GetBucketLocation, and DeleteBucket for empty buckets. Bucket names use 3–63 lowercase ASCII letters, digits, or hyphens, starting and ending with a letter or digit.
