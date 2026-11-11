@@ -62,10 +62,15 @@ go build -o stash ./cmd/stash
 umask 077
 cp stash.example.json stash.json
 # Edit stash.json to replace the sample secrets with unique random secrets.
+# Stash refuses to start while a secret still begins with "replace-this".
 ./stash -config stash.json
 ```
 
 Stash binds to loopback by default. For remote use, configure both `tls_cert` and `tls_key`, or terminate TLS at a reverse proxy that preserves the signed request host, path, and query. Keep the configuration readable only by the service account. To rotate a credential, add a new access key and secret, restart, migrate the client, then remove the old credential and restart again.
+
+Stash stops cleanly on SIGINT or SIGTERM: it stops accepting connections, gives requests in progress up to 30 seconds to finish, writes its final traffic statistics, releases the data directory, and exits with status 0. Set `TimeoutStopSec` above 30 seconds in a systemd unit.
+
+A request body that delivers nothing for `body_idle_timeout_seconds` (default 120) is ended with `RequestTimeout`, so a stalled client cannot hold a connection and a temporary file indefinitely. A client that keeps sending, however slowly, is never cut off. Raise the value for a client that pauses between chunks, for example one piping from a slow producer.
 
 Each credential maps bucket names to grants. A named grant takes precedence over `*`. The `read` grant allows listing and reading, `write` adds object writes and deletes, and `admin` adds bucket creation and deletion.
 
@@ -104,6 +109,16 @@ aws --endpoint-url http://127.0.0.1:9000 s3api put-object --bucket reports --key
 aws --endpoint-url http://127.0.0.1:9000 s3api list-objects-v2 --bucket reports
 aws --endpoint-url http://127.0.0.1:9000 s3api get-object --bucket reports --key example.txt downloaded.txt
 ```
+
+When a request is refused, the S3 error says why:
+
+| Error | Meaning |
+| --- | --- |
+| `InvalidAccessKeyId` | The access key ID is not in the configuration. |
+| `SignatureDoesNotMatch` | The secret, the signed headers, or the path and query differ from what the server computed. Behind a proxy, check that it preserves the `Host` header. |
+| `RequestTimeTooSkewed` | The client clock is more than 15 minutes from the server's. |
+| `AuthorizationHeaderMalformed` | The request is not valid SigV4, or it was signed for another region. The message names the expected region. |
+| `AccessDenied` | The request was anonymous, a presigned URL expired, a header was not signed, or the credential has no grant for the operation. |
 
 ## S3 subset
 

@@ -4,7 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"stash/internal/audit"
@@ -85,7 +89,7 @@ func Run(path string, options Options) error {
 	defer cancel()
 	replication.start(ctx)
 	go runLifecycle(ctx, store, cluster)
-	api := &server{store: store, credentials: cfg.Credentials, region: cfg.Region, replication: replication}
+	api := &server{store: store, credentials: cfg.Credentials, region: cfg.Region, replication: replication, bodyIdle: cfg.bodyIdle()}
 	var stats *analytics
 	if cfg.Admin != nil {
 		stats, err = openAnalytics(store.dir)
@@ -111,14 +115,58 @@ func Run(path string, options Options) error {
 	if stats != nil || auditLog != nil {
 		handler = trackRequests(handler, stats, auditLog)
 	}
-	return serve(cfg, handler)
+	err = serve(cfg, handler)
+	// Requests have finished, so stop the background loops and write the traffic
+	// they would otherwise have flushed up to ten seconds from now.
+	cancel()
+	if stats != nil {
+		if flushErr := stats.flush(); flushErr != nil {
+			log.Printf("analytics checkpoint: %v", flushErr)
+		}
+	}
+	return err
 }
 
+// shutdownGrace is how long requests in progress get to finish after SIGINT or
+// SIGTERM. It stays under the 90 seconds systemd waits before it sends SIGKILL.
+const shutdownGrace = 30 * time.Second
+
 func serve(cfg config, handler http.Handler) error {
-	web := &http.Server{Addr: cfg.Listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
-	log.Printf("Stash listening on %s", cfg.Listen)
-	if cfg.Cert != "" {
-		return web.ListenAndServeTLS(cfg.Cert, cfg.Key)
+	listener, err := net.Listen("tcp", cfg.Listen)
+	if err != nil {
+		return err
 	}
-	return web.ListenAndServe()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	log.Printf("Stash listening on %s", cfg.Listen)
+	return serveListener(ctx, listener, handler, cfg.Cert, cfg.Key, shutdownGrace)
+}
+
+// serveListener serves until ctx ends, then stops accepting connections and gives
+// requests in progress up to grace to finish. A normal stop returns nil, so the
+// caller's deferred cleanup (storage lock, audit log) runs.
+func serveListener(ctx context.Context, listener net.Listener, handler http.Handler, cert, key string, grace time.Duration) error {
+	web := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
+	serving := make(chan error, 1)
+	go func() {
+		if cert != "" {
+			serving <- web.ServeTLS(listener, cert, key)
+		} else {
+			serving <- web.Serve(listener)
+		}
+	}()
+	select {
+	case err := <-serving:
+		return err
+	case <-ctx.Done():
+	}
+	log.Printf("Stash is stopping; waiting up to %s for requests in progress", grace)
+	finish, cancel := context.WithTimeout(context.Background(), grace)
+	defer cancel()
+	if err := web.Shutdown(finish); err != nil {
+		log.Printf("Stash closed connections that were still busy after %s", grace)
+		web.Close()
+	}
+	<-serving
+	return nil
 }
