@@ -32,6 +32,14 @@ type config struct {
 
 var bucketName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$`)
 
+// samplePrefix starts every placeholder secret in stash.example.json. They are long
+// enough to pass the length check and are public, so a server must refuse to start with one.
+const samplePrefix = "replace-this"
+
+func isSample(secret string) bool {
+	return strings.HasPrefix(strings.ToLower(secret), samplePrefix)
+}
+
 func loadConfig(path string) (config, error) {
 	var cfg config
 	file, err := os.Open(path)
@@ -51,9 +59,15 @@ func loadConfig(path string) (config, error) {
 	if cfg.Admin != nil && (cfg.Admin.Username == "" || strings.Contains(cfg.Admin.Username, ":") || len(cfg.Admin.Password) < 16) {
 		return cfg, fmt.Errorf("admin console requires a username and password of at least 16 bytes")
 	}
+	if cfg.Admin != nil && isSample(cfg.Admin.Password) {
+		return cfg, fmt.Errorf("the admin console password is still a sample value: replace it with a unique random password")
+	}
 	for id, c := range cfg.Credentials {
 		if id == "" || len(c.Secret) < 16 || len(c.Label) > 64 {
 			return cfg, fmt.Errorf("each credential needs an ID and a secret of at least 16 bytes")
+		}
+		if isSample(c.Secret) {
+			return cfg, fmt.Errorf("credential %q still has a sample secret from stash.example.json: replace it with a unique random secret", id)
 		}
 		for bucket, permission := range c.Buckets {
 			if (bucket != "*" && !bucketName.MatchString(bucket)) || (permission != "read" && permission != "write" && permission != "admin") {

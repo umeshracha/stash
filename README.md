@@ -62,6 +62,7 @@ go build -o stash ./cmd/stash
 umask 077
 cp stash.example.json stash.json
 # Edit stash.json to replace the sample secrets with unique random secrets.
+# Stash refuses to start while a secret still begins with "replace-this".
 ./stash -config stash.json
 ```
 
