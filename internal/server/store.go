@@ -87,13 +87,22 @@ func openStoreMode(root string, recoverLocal bool) (*store, error) {
 
 func (s *store) close() { s.lock.Close() }
 
+// put stores the request body as an object. The body is read with no lock held:
+// a client can take hours to send 5 GiB, and a lock held for that long lets one
+// slow upload plus any request that needs the lock exclusively (a listing, a
+// delete, a bucket change) stall every other request. The lock is taken only to
+// publish the finished file.
 func (s *store) put(bucket, key string, r *http.Request) (object, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 	dir := filepath.Join(s.dir, bucket)
-	return s.writeObject(dir, key, r)
+	return s.stageObject(dir, key, r, func(file *os.File, obj *object) error {
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		obj.Protection = requestedProtection(r)
+		return s.publishVersion(file, dir, obj)
+	})
 }
 
+// writeObject is put for a caller that already holds s.mu.
 func (s *store) writeObject(dir, key string, r *http.Request) (object, error) {
 	return s.stageObject(dir, key, r, func(file *os.File, obj *object) error {
 		obj.Protection = requestedProtection(r)

@@ -70,6 +70,8 @@ Stash binds to loopback by default. For remote use, configure both `tls_cert` an
 
 Stash stops cleanly on SIGINT or SIGTERM: it stops accepting connections, gives requests in progress up to 30 seconds to finish, writes its final traffic statistics, releases the data directory, and exits with status 0. Set `TimeoutStopSec` above 30 seconds in a systemd unit.
 
+A request body that delivers nothing for `body_idle_timeout_seconds` (default 120) is ended with `RequestTimeout`, so a stalled client cannot hold a connection and a temporary file indefinitely. A client that keeps sending, however slowly, is never cut off. Raise the value for a client that pauses between chunks, for example one piping from a slow producer.
+
 Each credential maps bucket names to grants. A named grant takes precedence over `*`. The `read` grant allows listing and reading, `write` adds object writes and deletes, and `admin` adds bucket creation and deletion.
 
 ## Project layout

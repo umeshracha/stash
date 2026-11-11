@@ -89,7 +89,7 @@ func Run(path string, options Options) error {
 	defer cancel()
 	replication.start(ctx)
 	go runLifecycle(ctx, store, cluster)
-	api := &server{store: store, credentials: cfg.Credentials, region: cfg.Region, replication: replication}
+	api := &server{store: store, credentials: cfg.Credentials, region: cfg.Region, replication: replication, bodyIdle: cfg.bodyIdle()}
 	var stats *analytics
 	if cfg.Admin != nil {
 		stats, err = openAnalytics(store.dir)

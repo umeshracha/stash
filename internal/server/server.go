@@ -28,6 +28,8 @@ type server struct {
 	region      string
 	replication *replication
 	admin       *adminConsole
+	// bodyIdle ends a request whose body delivers nothing for this long; 0 turns it off.
+	bodyIdle time.Duration
 }
 
 const s3Namespace = "http://s3.amazonaws.com/doc/2006-03-01/"
@@ -63,6 +65,7 @@ type bucketEntry struct {
 }
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r = limitIdle(w, r, s.bodyIdle)
 	if strings.HasPrefix(r.URL.Path, adminPath) {
 		if s.admin == nil {
 			http.NotFound(w, r)
@@ -288,6 +291,8 @@ func storageError(w http.ResponseWriter, err error, missing string) {
 		failure(w, 400, "BadDigest")
 	case errors.Is(err, upload.ErrTooLarge):
 		failure(w, 413, "EntityTooLarge")
+	case errors.Is(err, os.ErrDeadlineExceeded):
+		failure(w, 400, "RequestTimeout")
 	default:
 		failure(w, 500, "InternalError")
 	}

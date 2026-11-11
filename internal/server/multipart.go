@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"stash/internal/fsutil"
@@ -48,6 +49,10 @@ func (s *server) multipart(w http.ResponseWriter, r *http.Request, bucket, key s
 		}
 	}
 	dir := filepath.Join(s.store.dir, bucket)
+	if r.Method == http.MethodPut && q.Has("uploadId") && r.Header.Get("X-Amz-Copy-Source") == "" {
+		s.uploadPart(w, r, dir, bucket, key, q)
+		return
+	}
 	if r.Method == http.MethodPost && q.Has("uploadId") {
 		s.store.mu.Lock()
 		defer s.store.mu.Unlock()
@@ -103,32 +108,9 @@ func (s *server) multipart(w http.ResponseWriter, r *http.Request, bucket, key s
 			failure(w, 400, "InvalidArgument")
 			return
 		}
-		if r.Header.Get("X-Amz-Copy-Source") != "" {
-			s.copyPart(w, r, c, stage, key, number, info.Checksum)
-			return
-		}
-		if strings.HasPrefix(r.Header.Get("X-Amz-Content-Sha256"), "STREAMING-") {
-			failure(w, 501, "NotImplemented")
-			return
-		}
-		if !upload.ValidatePart(r, info.Checksum) {
-			failure(w, 400, "InvalidRequest")
-			return
-		}
-		part, err := s.store.stageObject(stage, key, upload.Compute(r, info.Checksum.Algorithm), func(file *os.File, obj *object) error {
-			return s.store.commitData(file, stage, partName(number), obj)
-		})
-		if err != nil {
-			storageError(w, err, "NoSuchUpload")
-			return
-		}
-		w.Header().Set("ETag", part.ETag)
-		for name := range part.Headers {
-			if strings.HasPrefix(name, "X-Amz-Checksum-") {
-				w.Header().Set(name, part.Headers.Get(name))
-			}
-		}
-		w.WriteHeader(200)
+		// A part copied from another object is the only PUT that gets here;
+		// a part sent by the client is handled by uploadPart.
+		s.copyPart(w, r, c, stage, key, number, info.Checksum)
 	case http.MethodGet:
 		listParts(w, q, stage, bucket, key, id, info.Checksum)
 	case http.MethodPost:
@@ -150,6 +132,88 @@ func (s *server) multipart(w http.ResponseWriter, r *http.Request, bucket, key s
 	default:
 		failure(w, 501, "NotImplemented")
 	}
+}
+
+// uploadPart stores a part sent by the client.
+//
+// Like put, it reads the body with no lock held, so a slow client cannot keep the
+// store or the upload locks: with them held, one slow part and one request that
+// needs a lock exclusively would stall the server. The upload is looked up before
+// the body is read and checked again, under the locks, when the part is published,
+// because it can be completed or aborted while the body is arriving. Locks are
+// always taken in the order the other handlers use: the store, then the upload.
+func (s *server) uploadPart(w http.ResponseWriter, r *http.Request, dir, bucket, key string, q url.Values) {
+	id := q.Get("uploadId")
+	stage := filepath.Join(dir, ".mp-"+id)
+	var lock *sync.RWMutex
+	lookup := func() (info uploadInfo, ok bool) {
+		s.store.mu.RLock()
+		defer s.store.mu.RUnlock()
+		if _, err := os.Stat(dir); err != nil {
+			storageError(w, err, "NoSuchBucket")
+			return
+		}
+		decoded, err := hex.DecodeString(id)
+		if err != nil || len(decoded) != 16 || id != strings.ToLower(id) {
+			failure(w, 404, "NoSuchUpload")
+			return
+		}
+		lock = &s.store.uploadLocks[int(decoded[0])%len(s.store.uploadLocks)]
+		lock.RLock()
+		defer lock.RUnlock()
+		raw, err := os.ReadFile(filepath.Join(stage, "upload.json"))
+		if err != nil {
+			storageError(w, err, "NoSuchUpload")
+			return
+		}
+		if json.Unmarshal(raw, &info) != nil {
+			failure(w, 500, "InternalError")
+			return
+		}
+		if info.Key != key {
+			failure(w, 404, "NoSuchUpload")
+			return
+		}
+		return info, true
+	}
+	info, ok := lookup()
+	if !ok {
+		return
+	}
+	number, err := strconv.Atoi(q.Get("partNumber"))
+	if len(q) != 2 || err != nil || number < 1 || number > maxParts {
+		failure(w, 400, "InvalidArgument")
+		return
+	}
+	if strings.HasPrefix(r.Header.Get("X-Amz-Content-Sha256"), "STREAMING-") {
+		failure(w, 501, "NotImplemented")
+		return
+	}
+	if !upload.ValidatePart(r, info.Checksum) {
+		failure(w, 400, "InvalidRequest")
+		return
+	}
+	part, err := s.store.stageObject(stage, key, upload.Compute(r, info.Checksum.Algorithm), func(file *os.File, obj *object) error {
+		s.store.mu.RLock()
+		defer s.store.mu.RUnlock()
+		lock.RLock()
+		defer lock.RUnlock()
+		if _, err := os.Stat(filepath.Join(stage, "upload.json")); err != nil {
+			return err // completed or aborted while the body was arriving
+		}
+		return s.store.commitData(file, stage, partName(number), obj)
+	})
+	if err != nil {
+		storageError(w, err, "NoSuchUpload")
+		return
+	}
+	w.Header().Set("ETag", part.ETag)
+	for name := range part.Headers {
+		if strings.HasPrefix(name, "X-Amz-Checksum-") {
+			w.Header().Set(name, part.Headers.Get(name))
+		}
+	}
+	w.WriteHeader(200)
 }
 
 func startUpload(w http.ResponseWriter, r *http.Request, dir, bucket, key string, encrypted bool) {
