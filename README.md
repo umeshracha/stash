@@ -68,6 +68,8 @@ cp stash.example.json stash.json
 
 Stash binds to loopback by default. For remote use, configure both `tls_cert` and `tls_key`, or terminate TLS at a reverse proxy that preserves the signed request host, path, and query. Keep the configuration readable only by the service account. To rotate a credential, add a new access key and secret, restart, migrate the client, then remove the old credential and restart again.
 
+Stash stops cleanly on SIGINT or SIGTERM: it stops accepting connections, gives requests in progress up to 30 seconds to finish, writes its final traffic statistics, releases the data directory, and exits with status 0. Set `TimeoutStopSec` above 30 seconds in a systemd unit.
+
 Each credential maps bucket names to grants. A named grant takes precedence over `*`. The `read` grant allows listing and reading, `write` adds object writes and deletes, and `admin` adds bucket creation and deletion.
 
 ## Project layout
